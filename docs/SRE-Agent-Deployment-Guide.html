@@ -1,0 +1,435 @@
+<title>SRE Agent Deployment Guide</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  /* Layout: single reading column with a sticky step index on wide screens; steps read like a runbook. */
+  :root {
+    --bg: #f4f5f2; --surface: #ffffff; --surface-2: #eceee8; --text: #1b1d1a; --muted: #5a5f57; --border: #dcdfd6;
+    --accent: #1f6f5c; --accent-soft: #dcefe8; --ok: #1d7a4c; --warn: #9a5f00; --warn-soft: #fbefd9;
+    --code-bg: #1a1d1b; --code-text: #e6ebe7; --code-dim: #8fa198;
+    --f-body: "IBM Plex Sans", system-ui, "Segoe UI", sans-serif; --f-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #121412; --surface: #1a1d1a; --surface-2: #232723; --text: #e7ebe5; --muted: #a2a99f; --border: #313630;
+      --accent: #6cc7ac; --accent-soft: #17302a; --ok: #5cc28d; --warn: #e2a94b; --warn-soft: #382a12;
+      --code-bg: #0c0e0d; --code-text: #e6ebe7; --code-dim: #7d8f86; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #121412; --surface: #1a1d1a; --surface-2: #232723; --text: #e7ebe5; --muted: #a2a99f; --border: #313630;
+    --accent: #6cc7ac; --accent-soft: #17302a; --ok: #5cc28d; --warn: #e2a94b; --warn-soft: #382a12;
+    --code-bg: #0c0e0d; --code-text: #e6ebe7; --code-dim: #7d8f86; color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font: 16px/1.65 var(--f-body); }
+  .shell { max-width: 1120px; margin: 0 auto; padding-block: 40px 80px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+    display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 48px; }
+  @media (max-width: 860px) { .shell { grid-template-columns: minmax(0, 1fr); gap: 24px; } .toc { position: static !important; } }
+  .toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 24px); align-self: start; font-size: 14px; }
+  .toc b { display: block; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+  .toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+  .toc a { display: block; padding: 5px 10px; border-radius: 6px; color: var(--text); text-decoration: none; border-left: 2px solid var(--border); }
+  .toc a:hover, .toc a:focus-visible { background: var(--accent-soft); border-left-color: var(--accent); outline: none; }
+  main { min-width: 0; max-width: 780px; }
+  a { color: var(--accent); }
+  .eyebrow { font: 600 12px/1 var(--f-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
+  h1 { font-size: clamp(30px, 5vw, 42px); line-height: 1.12; margin: 10px 0 12px; letter-spacing: -.015em; text-wrap: balance; }
+  h2 { font-size: clamp(22px, 3vw, 27px); line-height: 1.25; margin: 0 0 10px; text-wrap: balance; display: flex; gap: 12px; align-items: baseline; }
+  h2 .n { font: 500 14px var(--f-mono); color: var(--accent); background: var(--accent-soft); padding: 3px 8px; border-radius: 6px; flex: none; }
+  h3 { font-size: 18px; margin: 28px 0 8px; }
+  section { padding-top: 48px; margin-top: 48px; border-top: 1px solid var(--border); scroll-margin-top: 16px; }
+  .lead { font-size: 18px; color: var(--muted); max-width: 64ch; margin: 0; }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 18px; font: 14px var(--f-mono); color: var(--muted); }
+  .meta span b { color: var(--text); font-weight: 500; }
+  p, li { max-width: 68ch; }
+  ul { padding-left: 22px; } li { margin: 4px 0; }
+  code { font: .9em var(--f-mono); background: var(--surface-2); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+  .tbl { overflow-x: auto; margin: 14px 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+  th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+  th { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); background: var(--surface-2); font-weight: 600; }
+  tr:last-child td { border-bottom: 0; }
+  td code { white-space: nowrap; }
+  .code { position: relative; margin: 14px 0; }
+  pre { margin: 0; background: var(--code-bg); color: var(--code-text); padding: 16px 18px; border-radius: 8px; overflow-x: auto;
+        font: 13.5px/1.6 var(--f-mono); }
+  pre .c { color: var(--code-dim); }
+  .copy { position: absolute; top: 8px; right: 8px; font: 500 12px var(--f-body); color: var(--code-text); background: rgba(255,255,255,.08);
+          border: 1px solid rgba(255,255,255,.16); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+  .copy:hover, .copy:focus-visible { background: rgba(255,255,255,.18); outline: none; }
+  .note { border: 1px solid var(--border); background: var(--surface); border-radius: 8px; padding: 12px 16px; margin: 16px 0; }
+  .note.warn { background: var(--warn-soft); border-color: transparent; }
+  .note b:first-child { display: block; font-size: 13px; letter-spacing: .04em; text-transform: uppercase; margin-bottom: 2px; }
+  .note.warn b:first-child { color: var(--warn); }
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+  .cols > div { min-width: 0; }
+  .checks { list-style: none; padding: 0; display: grid; gap: 8px; }
+  .checks li { display: flex; gap: 10px; align-items: flex-start; }
+  .checks input { margin-top: 5px; accent-color: var(--accent); width: 16px; height: 16px; flex: none; }
+  .tag { font: 500 12px var(--f-mono); padding: 2px 7px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+  @media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+</style>
+
+<div class="shell">
+  <nav class="toc" aria-label="Steps">
+    <b>Steps</b>
+    <ol>
+      <li><a href="#prereq">0 · Before you start</a></li>
+      <li><a href="#install">1 · Install</a></li>
+      <li><a href="#runner">2 · systemd or pm2</a></li>
+      <li><a href="#perms">3 · Log access</a></li>
+      <li><a href="#setup">4 · Guided setup</a></li>
+      <li><a href="#start">5 · Start it</a></li>
+      <li><a href="#verify">6 · Verify</a></li>
+      <li><a href="#ops">7 · Day-to-day</a></li>
+      <li><a href="#trouble">Troubleshooting</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <div class="eyebrow">Deployment guide · v2.0.0</div>
+    <h1>Deploy SRE Agent on Ubuntu, Debian or RHEL</h1>
+    <p class="lead">Install the <code>.deb</code> package on one Linux server and run it as a background service with systemd or pm2.</p>
+    <div class="meta"><span><b>~15 min</b> total</span><span><b>2 min</b> install</span><span><b>5 min</b> questions</span><span>rest: checks</span></div>
+
+    <section id="prereq">
+      <h2><span class="n">0</span>Have these ready before you start</h2>
+      <div class="tbl"><table>
+        <tr><th>What</th><th>Why</th><th>Example</th></tr>
+        <tr><td>Linux server: Ubuntu 22.04 / 24.04 or Debian 12, x86_64, with <code>sudo</code></td><td>The agent runs here</td><td><code>ubuntu@ops-server</code></td></tr>
+        <tr><td>An AI provider API key</td><td>Root-cause analysis and fixes</td><td>Anthropic <code>sk-ant-...</code>, OpenAI <code>sk-...</code>, Groq <code>gsk_...</code></td></tr>
+        <tr><td>Where alerts go: Slack incoming webhook, Google Chat webhook, or SMTP details</td><td>Incident cards with Approve / Reject</td><td><code>https://hooks.slack.com/services/T000/B000/XXXX</code> · see the <b>Slack integration guide</b></td></tr>
+        <tr><td>The <b>error log file</b> of your app and its <b>service name</b></td><td>What the agent watches</td><td><code>/var/log/orders-api/error.log</code>, <code>orders-api</code></td></tr>
+        <tr><td>If the log is on <b>another</b> server: host/IP and an SSH user that can read it</td><td>Read-only access over SSH</td><td><code>10.0.1.25</code>, <code>logreader</code></td></tr>
+        <tr><td>Optional: public HTTPS address people click in Slack/email</td><td>Approve / Reject links</td><td><code>https://sre.yourcompany.com</code></td></tr>
+        <tr><td>Optional: app Git repo, its test command, a GitHub token</td><td>Automatic fixes as pull requests</td><td><code>npm test -- --ci</code>, <code>ghp_...</code></td></tr>
+      </table></div>
+
+      <h3>Check your log format first</h3>
+      <p>The agent raises incidents only for lines it can read. Each error line must use <b>one</b> of these formats:</p>
+      <div class="tbl"><table>
+        <tr><th>Format</th><th>Example line</th></tr>
+        <tr><td>Bracketed</td><td><code>[2026-10-27T10:00:00Z] [ERROR] [orders-api] DatabaseTimeout: connection refused</code></td></tr>
+        <tr><td>JSON lines (e.g. winston)</td><td><code>{"level":"error","message":"PaymentFailed: gateway 502","service":"orders-api","timestamp":"2026-10-27T10:00:05Z"}</code></td></tr>
+        <tr><td>Node logger style</td><td><code>2026-10-27 10:00:01:184 [error] Error fetching report metrics: fetch failed</code></td></tr>
+      </table></div>
+      <ul>
+        <li><code>ERROR</code>, <code>FATAL</code>, <code>CRITICAL</code> become <b>high</b> severity; <code>WARN</code> becomes <b>medium</b>. <code>INFO</code> and <code>DEBUG</code> are ignored.</li>
+        <li>Raw stack traces never raise an incident on their own. They are attached as context when a proper error line fires.</li>
+        <li>JSON loggers must write <code>level</code> as text (<code>"error"</code>). Pino's numeric levels (<code>"level":50</code>) are not recognised; configure pino to print labels.</li>
+        <li><b>pm2 users:</b> the <code>pm2 logs</code> error file holds whatever your app prints. If it uses plain <code>console.error</code>, switch to a structured logger (winston JSON is easiest) or the bracketed format.</li>
+      </ul>
+    </section>
+
+    <section id="install">
+      <h2><span class="n">1</span>Install the package</h2>
+<div class="code"><pre>wget https://github.com/AA-Solutions-tech/SRE-Agent/releases/download/v2.0.0/sre-agent_2.0.0-1_amd64.deb
+wget https://github.com/AA-Solutions-tech/SRE-Agent/releases/download/v2.0.0/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS          <span class="c"># expect: sre-agent_2.0.0-1_amd64.deb: OK</span>
+sudo apt install ./sre-agent_2.0.0-1_amd64.deb</pre></div>
+      <p>You should see this at the end:</p>
+<div class="code"><pre>sre-agent: created /etc/sre-agent/sre-agent.env
+
+SRE Agent 2.0.0 installed. The service is enabled but NOT started yet.
+  Configure it:   sudo sre-agent setup</pre></div>
+      <h3>RHEL, Rocky, Alma, Amazon Linux</h3>
+      <p>Use the <code>.rpm</code> instead (install <code>acl</code> with <code>dnf</code> in step 3). On arm64 use <code>sre-agent_2.0.0-1_arm64.deb</code> or <code>sre-agent-2.0.0-1.aarch64.rpm</code>.</p>
+<div class="code"><pre>sudo dnf install https://github.com/AA-Solutions-tech/SRE-Agent/releases/download/v2.0.0/sre-agent-2.0.0-1.x86_64.rpm</pre></div>
+      <h3>Verify the install</h3>
+<div class="code"><pre>sre-agent version                     <span class="c"># sre-agent 2.0.0</span>
+id sre-agent                          <span class="c"># the service user exists</span>
+sudo ls -l /etc/sre-agent/            <span class="c"># sre-agent.env  -rw-r----- root sre-agent</span></pre></div>
+      <p>The install put the program in <code>/opt/sre-agent</code>, created the <code>sre-agent</code> system user, wrote the config file with a <b>unique API key and approval secret for this server</b>, and registered the <code>sre-agent</code> systemd service (enabled, not started).</p>
+    </section>
+
+    <section id="runner">
+      <h2><span class="n">2</span>Choose how it runs: systemd or pm2</h2>
+      <div class="tbl"><table>
+        <tr><th></th><th>systemd <span class="tag">recommended</span></th><th>pm2</th></tr>
+        <tr><td>Set up by the package</td><td>Yes</td><td>No, one extra command</td></tr>
+        <tr><td>Starts at boot</td><td>Yes</td><td>Yes, with <code>pm2 startup</code> + <code>pm2 save</code></td></tr>
+        <tr><td>Security hardening</td><td>Yes (read-only system, private tmp, no extra privileges)</td><td>No; runs as the <code>sre-agent</code> user only</td></tr>
+        <tr><td>Logs</td><td><code>journalctl -u sre-agent</code> + <code>/var/log/sre-agent/sre.log</code></td><td><code>pm2 logs sre-agent</code> + <code>/var/log/sre-agent/sre.log</code></td></tr>
+        <tr><td>Config check before each start</td><td>Yes</td><td>No, but it still refuses to start with default secrets</td></tr>
+      </table></div>
+      <div class="note warn"><b>Use one, not both</b>If both try to run, the second refuses to start with “another sre-agent is already running”.</div>
+    </section>
+
+    <section id="perms">
+      <h2><span class="n">3</span>Let the agent read your log file</h2>
+      <p>Same-server logs only. Skip this step if the log is on another server (SSH). The agent runs as the <code>sre-agent</code> user, which must be able to <b>read</b> the log file and open its folders.</p>
+      <h3>Logs under <code>/var/log/...</code> (most common)</h3>
+<div class="code"><pre>sudo apt install -y acl
+sudo setfacl -m u:sre-agent:rx /var/log/orders-api                 <span class="c"># open the folder</span>
+sudo setfacl -m u:sre-agent:r /var/log/orders-api/error.log        <span class="c"># read the file</span>
+sudo setfacl -d -m u:sre-agent:r /var/log/orders-api               <span class="c"># new/rotated files too</span>
+sudo -u sre-agent head -1 /var/log/orders-api/error.log            <span class="c"># must print a line, not "Permission denied"</span></pre></div>
+      <h3>pm2 logs under a home folder</h3>
+      <p>For example <code>/home/deploy/.pm2/logs/orders-api-error.log</code>:</p>
+<div class="code"><pre>sudo apt install -y acl
+sudo setfacl -m u:sre-agent:x /home/deploy /home/deploy/.pm2       <span class="c"># pass through only</span>
+sudo setfacl -m u:sre-agent:rx /home/deploy/.pm2/logs
+sudo setfacl -m u:sre-agent:r /home/deploy/.pm2/logs/orders-api-error.log
+sudo setfacl -d -m u:sre-agent:r /home/deploy/.pm2/logs
+sudo -u sre-agent head -1 /home/deploy/.pm2/logs/orders-api-error.log</pre></div>
+      <p>If you run the agent with <b>systemd</b> and the log is under <code>/home</code>, let the service see <code>/home</code> (it hides home folders by default):</p>
+<div class="code"><pre>sudo systemctl edit sre-agent</pre></div>
+      <p>Add these lines in the editor, then save:</p>
+<div class="code"><pre>[Service]
+ProtectHome=read-only</pre></div>
+    </section>
+
+    <section id="setup">
+      <h2><span class="n">4</span>Run the guided setup</h2>
+<div class="code"><pre>sudo sre-agent setup</pre></div>
+      <div class="note"><b>How to answer</b>
+        <span><code>Enter</code> keeps the value in <code>[brackets]</code> or skips an optional question · <code>-</code> clears a value · <code>Ctrl+C</code> quits without saving · secrets are typed hidden · required questions repeat until answered · a wrong format (URL, port, email) is explained and asked again.</span>
+      </div>
+
+      <h3>4.1 AI provider</h3>
+<div class="code"><pre>  1) anthropic          Claude (ANTHROPIC_API_KEY) (current)
+  2) openai             OpenAI (OPENAI_API_KEY)
+  3) groq               Groq (GROQ_API_KEY)
+  4) xai                xAI Grok (XAI_API_KEY)
+  5) openai_compatible  Ollama, vLLM, Together... (OpenAI-compatible URL)
+  Provider [anthropic]:
+  ANTHROPIC_API_KEY (required):
+  Model (optional, Enter to skip):</pre></div>
+      <div class="tbl"><table>
+        <tr><th>Question</th><th>What to give</th><th>Required</th></tr>
+        <tr><td>Provider</td><td>Number or name, e.g. <code>1</code></td><td>Yes (Enter keeps <code>anthropic</code>)</td></tr>
+        <tr><td><code>&lt;PROVIDER&gt;_API_KEY</code></td><td>Paste your key (hidden)</td><td>Yes</td></tr>
+        <tr><td>Base URL</td><td>Option 5 only, e.g. <code>http://localhost:11434/v1</code></td><td>Yes for option 5</td></tr>
+        <tr><td>Model</td><td>Leave empty for the provider default</td><td>No</td></tr>
+      </table></div>
+
+      <h3>4.2 Alerts</h3>
+<div class="code"><pre>  1) slack              Slack incoming webhook
+  2) gchat              Google Chat webhook
+  3) email              Email over SMTP
+  Channels (comma separated) [slack]:
+  Slack webhook URL (required):</pre></div>
+      <div class="tbl"><table>
+        <tr><th>Question</th><th>What to give</th><th>Required</th></tr>
+        <tr><td>Channels</td><td><code>1</code>, <code>2</code>, <code>3</code> or a mix like <code>1,3</code></td><td>At least one</td></tr>
+        <tr><td>Slack webhook URL</td><td><code>https://hooks.slack.com/services/...</code> (must be https). How to create it: <b>Slack integration guide</b></td><td>If Slack chosen</td></tr>
+        <tr><td>Google Chat webhook URL</td><td><code>https://chat.googleapis.com/v1/spaces/...</code></td><td>If Google Chat chosen</td></tr>
+        <tr><td>SMTP host / port</td><td>e.g. <code>smtp.gmail.com</code> / <code>587</code></td><td>If email chosen</td></tr>
+        <tr><td>SMTP user / password</td><td>Mailbox login; for Gmail use an <b>app password</b></td><td>If email chosen</td></tr>
+        <tr><td>From address</td><td>Defaults to the SMTP user</td><td>If email chosen</td></tr>
+        <tr><td>Send to</td><td>Comma-separated, e.g. <code>oncall@company.com,lead@company.com</code></td><td>If email chosen</td></tr>
+      </table></div>
+
+      <h3>4.3 Logs</h3>
+<div class="code"><pre>  1) ssh                Read a log file on another server over SSH (current)
+  2) local_file         Read a log file on this server
+  Log source [ssh]:
+  Service name (shown in incidents) [my-service]:</pre></div>
+      <div class="cols">
+        <div>
+          <p><b>Log on this server</b> (answer <code>2</code>)</p>
+          <div class="tbl"><table>
+            <tr><th>Question</th><th>What to give</th></tr>
+            <tr><td>Service name</td><td>Short, no spaces, e.g. <code>orders-api</code></td></tr>
+            <tr><td>Log file path</td><td>Full path, e.g. <code>/var/log/orders-api/error.log</code>. Rotating names allowed: <code>errors-{date}.jsonl</code> or <code>errors-*.jsonl</code></td></tr>
+          </table></div>
+        </div>
+        <div>
+          <p><b>Log on another server</b> (answer <code>1</code>)</p>
+          <div class="tbl"><table>
+            <tr><th>Question</th><th>What to give</th></tr>
+            <tr><td>Service name</td><td>e.g. <code>orders-api</code></td></tr>
+            <tr><td>Server host or IP</td><td>e.g. <code>10.0.1.25</code> (no <code>http://</code>)</td></tr>
+            <tr><td>SSH port</td><td>Enter for <code>22</code></td></tr>
+            <tr><td>SSH user</td><td>Can read the log, e.g. <code>logreader</code></td></tr>
+            <tr><td>Log path there</td><td>e.g. <code>/var/log/orders-api/error.log</code></td></tr>
+            <tr><td>Key / known_hosts file</td><td>Enter for both</td></tr>
+          </table></div>
+        </div>
+      </div>
+      <p>For SSH, the setup then asks three more things:</p>
+      <ul>
+        <li><code>Create one for the agent now? [Y/n]</code>: press Enter. It prints a public key starting <code>ssh-ed25519 ...</code>. <b>Copy it.</b></li>
+        <li><code>Connect to 10.0.1.25:22 now to trust its host key? [Y/n]</code>: press Enter.</li>
+        <li><code>Does the fingerprint match? [y/N]</code>: on the log server run <code>for f in /etc/ssh/ssh_host_*_key.pub; do ssh-keygen -lf $f; done</code> and compare the <code>SHA256:...</code> of the same key type. Type <code>y</code> only if they match.</li>
+      </ul>
+      <p>Then, <b>on the log server</b>, allow that key to log in:</p>
+<div class="code"><pre>sudo -u logreader mkdir -p ~logreader/.ssh
+echo 'ssh-ed25519 AAAA... sre-agent@ops-server' | sudo -u logreader tee -a ~logreader/.ssh/authorized_keys
+sudo chmod 700 ~logreader/.ssh &amp;&amp; sudo chmod 600 ~logreader/.ssh/authorized_keys</pre></div>
+
+      <h3>4.4 Web access</h3>
+<div class="code"><pre>  Public URL [http://localhost:8000]:
+  1) 127.0.0.1          this machine only, behind a reverse proxy (safer) (current)
+  2) 0.0.0.0            all network interfaces
+  Listen on [127.0.0.1]:
+  Port [8000]:</pre></div>
+      <div class="tbl"><table>
+        <tr><th>Question</th><th>What to give</th></tr>
+        <tr><td>Public URL</td><td>HTTPS address of your reverse proxy, e.g. <code>https://sre.yourcompany.com</code>. For a first test, Enter keeps <code>http://localhost:8000</code> (approval links then only work on this server)</td></tr>
+        <tr><td>Listen on</td><td>Enter (<code>127.0.0.1</code>) and put nginx/Caddy in front. Choose <code>2</code> only with no proxy and a firewalled port</td></tr>
+        <tr><td>Port</td><td>Enter for <code>8000</code>, or another free port</td></tr>
+      </table></div>
+
+      <h3>4.5 Code fixes (optional)</h3>
+<div class="code"><pre>  Configure the repository, tests and GitHub pull requests now? [y/N]:</pre></div>
+      <p>Press Enter to skip for now. If you answer <code>y</code>:</p>
+      <div class="tbl"><table>
+        <tr><th>Question</th><th>What to give</th></tr>
+        <tr><td>Repo clone path</td><td>Enter for <code>/var/lib/sre-agent/repo</code> (clone your repo there, see Step 7)</td></tr>
+        <tr><td>Base branch</td><td>e.g. <code>main</code> or <code>dev</code></td></tr>
+        <tr><td>Test command</td><td>e.g. <code>npm test -- --ci</code>. The tool must be installed for the service</td></tr>
+        <tr><td>Lint command</td><td>e.g. <code>npx eslint .</code> (optional)</td></tr>
+        <tr><td>GitHub token</td><td>Fine-grained token, Contents + Pull requests read/write on that repo (hidden)</td></tr>
+      </table></div>
+
+      <h3>4.6 Automation</h3>
+<div class="code"><pre>  Change the automation switches now? [y/N]:</pre></div>
+      <p>Answer <b><code>y</code></b>, then:</p>
+      <div class="tbl"><table>
+        <tr><th>Question</th><th>First answer</th><th>Why</th></tr>
+        <tr><td><code>Watch the logs continuously (auto mode)?</code></td><td><b><code>y</code></b></td><td><b>Required for monitoring.</b> Without it the service runs but does not watch the log</td></tr>
+        <tr><td><code>Let the agent write code fixes?</code></td><td><code>n</code> at first</td><td>Turn on once incident cards look right and 4.5 is configured</td></tr>
+        <tr><td><code>Push approved fixes to the remote?</code></td><td><code>n</code> at first</td><td>Only asked if code fixes are on</td></tr>
+        <tr><td><code>Shipping</code></td><td><code>approve</code></td><td>A person approves every commit/push/PR</td></tr>
+      </table></div>
+
+      <h3>4.7 Summary, save and check</h3>
+<div class="code"><pre>6 setting(s) will change
+------------------------
+  ANTHROPIC_API_KEY  ****7890
+  SLACK_WEBHOOK_URL  ****XXXX
+  MONITOR_SOURCE     local_file
+  MONITOR_SERVICE    orders-api
+  MONITOR_LOG_PATH   /var/log/orders-api/error.log
+  SRE_AUTO_RUN       true
+  Save to /etc/sre-agent/sre-agent.env? [Y/n]:</pre></div>
+      <p>Press Enter to save. The setup then runs the health check. Every line should be <code>OK</code> (a <code>WARN</code> for <code>TEST_CMD</code> is fine while code fixes are off):</p>
+<div class="code"><pre>[OK  ] APPROVAL_SECRET  set
+[OK  ] SRE_API_KEY      set
+[OK  ] SRE_HOME         /var/lib/sre-agent
+[OK  ] database         /var/lib/sre-agent/starter.db (schema v1)
+[OK  ] git              /usr/bin/git
+[OK  ] LLM key          ANTHROPIC_API_KEY set
+[OK  ] notifications    slack
+...
+all required checks passed</pre></div>
+      <p>Last question: <code>Start sre-agent now? [Y/n]</code>. For <b>systemd</b> press Enter. For <b>pm2</b> type <code>n</code> and continue with 5B.</p>
+    </section>
+
+    <section id="start">
+      <h2><span class="n">5</span>Start it</h2>
+      <h3>5A · With systemd</h3>
+<div class="code"><pre>sudo systemctl start sre-agent          <span class="c"># skip if setup already started it</span>
+sudo systemctl status sre-agent         <span class="c"># Active: active (running)</span></pre></div>
+      <p>It starts automatically at boot (the package enabled it).</p>
+      <h3>5B · With pm2</h3>
+      <p>pm2 must run the agent <b>as root</b>; the agent then switches itself to the <code>sre-agent</code> user. This is root's own pm2 list, separate from your app user's list.</p>
+<div class="code"><pre>sudo systemctl disable --now sre-agent                                   <span class="c"># make sure systemd does not run it too</span>
+sudo pm2 start /usr/bin/sre-agent --name sre-agent --interpreter none -- serve
+sudo pm2 save                                                            <span class="c"># remember it</span>
+sudo pm2 startup systemd                                                 <span class="c"># start root's pm2 at boot (once per server)</span>
+sudo pm2 list                                                            <span class="c"># sre-agent  online</span></pre></div>
+      <p>If <code>sudo pm2</code> says “command not found” (pm2 installed with nvm), pass your PATH. Do the same for <code>save</code>, <code>startup</code> and <code>list</code>:</p>
+<div class="code"><pre>sudo env "PATH=$PATH" pm2 start /usr/bin/sre-agent --name sre-agent --interpreter none -- serve</pre></div>
+    </section>
+
+    <section id="verify">
+      <h2><span class="n">6</span>Verify everything works</h2>
+      <p>Run these in order. Each comment says what you should see.</p>
+<div class="code"><pre><span class="c"># 1. Health check: all required checks OK</span>
+sudo sre-agent doctor
+
+<span class="c"># 2. Process is running as the sre-agent user</span>
+ps -o user=,cmd= -C python3 | grep sre_agent      <span class="c"># sre-agent  ... -m sre_agent serve</span>
+
+<span class="c"># 3. Web API answers</span>
+curl -s localhost:8000/health                      <span class="c"># {"ok":true,"version":"2.0.0",...}</span>
+
+<span class="c"># 4. API is protected</span>
+curl -s -o /dev/null -w "%{http_code}\n" localhost:8000/issues                              <span class="c"># 401</span>
+KEY=$(sudo sed -n 's/^SRE_API_KEY=\([^ ]*\).*/\1/p' /etc/sre-agent/sre-agent.env)
+curl -s -o /dev/null -w "%{http_code}\n" -H "X-API-Key: $KEY" localhost:8000/issues         <span class="c"># 200</span>
+
+<span class="c"># 5. The watcher started</span>
+sudo grep -m1 "auto mode ON" /var/log/sre-agent/sre.log          <span class="c"># a line with "auto.01.start"</span></pre></div>
+
+      <h3>End-to-end test: make a test incident</h3>
+      <p>Write one test error line into the watched log (for SSH, run it on the log server). Use <b>your</b> service name and log path:</p>
+<div class="code"><pre>echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] [ERROR] [orders-api] SreAgentTest: this is a test error, please ignore" \
+  | sudo tee -a /var/log/orders-api/error.log</pre></div>
+      <p>Within a few seconds:</p>
+<div class="code"><pre>curl -s -H "X-API-Key: $KEY" localhost:8000/issues | head -c 400
+<span class="c"># {"issues":[{"id":"...","service":"orders-api","error":"SreAgentTest","severity":"HIGH","state":"open","count":1,...</span></pre></div>
+      <p>An <b>incident card</b> arrives in Slack / Google Chat / email with the root-cause summary and <b>Approve / Reject / Request changes</b> buttons. Click <b>Reject</b> for the test. If the issue appears but no message arrives, see Troubleshooting.</p>
+
+      <h3>Checklist</h3>
+      <ul class="checks">
+        <li><input type="checkbox" id="c1"><label for="c1"><code>sre-agent doctor</code> shows <code>all required checks passed</code></label></li>
+        <li><input type="checkbox" id="c2"><label for="c2"><code>/health</code> returns <code>"ok":true</code></label></li>
+        <li><input type="checkbox" id="c3"><label for="c3"><code>/issues</code> returns 401 without the key and 200 with it</label></li>
+        <li><input type="checkbox" id="c4"><label for="c4"><code>auto mode ON</code> is in <code>/var/log/sre-agent/sre.log</code></label></li>
+        <li><input type="checkbox" id="c5"><label for="c5">The test error became an issue and a message arrived</label></li>
+        <li><input type="checkbox" id="c6"><label for="c6">After a reboot the agent is running again</label></li>
+      </ul>
+    </section>
+
+    <section id="ops">
+      <h2><span class="n">7</span>Day-to-day operations</h2>
+      <div class="tbl"><table>
+        <tr><th>Task</th><th>systemd</th><th>pm2</th></tr>
+        <tr><td>Status</td><td><code>sudo systemctl status sre-agent</code></td><td><code>sudo pm2 list</code></td></tr>
+        <tr><td>Live output</td><td><code>journalctl -u sre-agent -f</code></td><td><code>sudo pm2 logs sre-agent</code></td></tr>
+        <tr><td>Agent event log</td><td colspan="2"><code>sudo tail -f /var/log/sre-agent/sre.log</code></td></tr>
+        <tr><td>Change settings</td><td><code>sudo sre-agent setup --only notifications</code> (or <code>llm</code>, <code>logs</code>, <code>web</code>, <code>code</code>, <code>automation</code>), accept the restart</td><td>Same, answer <code>n</code> to start, then <code>sudo pm2 restart sre-agent</code></td></tr>
+        <tr><td>Restart</td><td><code>sudo systemctl restart sre-agent</code></td><td><code>sudo pm2 restart sre-agent</code></td></tr>
+        <tr><td>Stop</td><td><code>sudo systemctl stop sre-agent</code></td><td><code>sudo pm2 stop sre-agent</code></td></tr>
+        <tr><td>Upgrade</td><td><code>sudo apt install ./sre-agent_&lt;new&gt;-1_amd64.deb</code> (settings kept, DB backed up, restarted if running)</td><td>Same, then <code>sudo pm2 restart sre-agent</code></td></tr>
+        <tr><td>Back up</td><td colspan="2"><code>sudo tar czf sre-agent-backup.tgz /etc/sre-agent /var/lib/sre-agent</code></td></tr>
+        <tr><td>Remove</td><td><code>sudo apt remove sre-agent</code> keeps settings and data; <code>sudo apt purge sre-agent</code> also deletes settings</td><td><code>sudo pm2 delete sre-agent &amp;&amp; sudo pm2 save</code>, then the same</td></tr>
+      </table></div>
+      <p>Enable code fixes later: clone the repo for the service user, then rerun setup for <code>code</code> and <code>automation</code>.</p>
+<div class="code"><pre>sudo -u sre-agent git clone https://github.com/yourorg/orders-api.git /var/lib/sre-agent/repo
+sudo sre-agent setup --only code,automation</pre></div>
+    </section>
+
+    <section id="trouble">
+      <h2>Troubleshooting</h2>
+      <div class="tbl"><table>
+        <tr><th>Symptom</th><th>Cause</th><th>Fix</th></tr>
+        <tr><td><code>doctor</code>: <code>[FAIL] APPROVAL_SECRET</code></td><td>Secret missing or default</td><td><code>sudo sre-agent setup</code> regenerates it</td></tr>
+        <tr><td>Will not start: <code>another sre-agent is already running</code></td><td>Both systemd and pm2 run it</td><td>Keep one: <code>sudo systemctl disable --now sre-agent</code> <b>or</b> <code>sudo pm2 delete sre-agent</code></td></tr>
+        <tr><td>Test line creates no issue</td><td>Auto mode is off</td><td><code>sudo sre-agent setup --only automation</code>, answer yes to “Watch the logs continuously”</td></tr>
+        <tr><td>Test line creates no issue</td><td>Line format not recognised</td><td>Use a format from Step 0</td></tr>
+        <tr><td>Test line creates no issue</td><td><code>sre-agent</code> cannot read the log</td><td>Step 3; test with <code>sudo -u sre-agent head -1 &lt;log&gt;</code></td></tr>
+        <tr><td>Works by hand, not under systemd, for a log in <code>/home</code></td><td>systemd hides <code>/home</code></td><td>Step 3: <code>ProtectHome=read-only</code> drop-in</td></tr>
+        <tr><td>Issue exists but no Slack/email message</td><td>Wrong webhook / SMTP details</td><td><code>sudo sre-agent setup --only notifications</code>; check <code>sudo grep -i notify /var/log/sre-agent/sre.log</code></td></tr>
+        <tr><td><code>doctor</code>: <code>[FAIL] SSH log source</code> / <code>SSH reachable</code></td><td>Key not authorised, host key not trusted, or firewall</td><td>Step 4.3; test with <code>sudo -u sre-agent ssh -i /var/lib/sre-agent/.ssh/id_ed25519 logreader@10.0.1.25 true</code></td></tr>
+        <tr><td><code>doctor</code>: <code>[WARN] TEST_CMD 'npm' not on PATH</code></td><td>Node installed for another user (nvm)</td><td>Install node system-wide, or <code>sudo systemctl edit sre-agent</code> → <code>[Service]</code> <code>Environment=PATH=/path/to/node/bin:/usr/local/bin:/usr/bin:/bin</code></td></tr>
+        <tr><td>Approve / Reject links do not open</td><td>Public URL is <code>localhost</code></td><td>Put nginx/Caddy with HTTPS in front and run <code>sudo sre-agent setup --only web</code></td></tr>
+      </table></div>
+      <div class="note"><b>Getting help</b>Send the output of <code>sudo sre-agent doctor</code> and the last 100 lines of <code>/var/log/sre-agent/sre.log</code>. The agent masks tokens in its log, but glance through it before sending.</div>
+    </section>
+  </main>
+</div>
+
+<script>
+  document.querySelectorAll(".code").forEach(function (box) {
+    var btn = document.createElement("button");
+    btn.type = "button"; btn.className = "copy"; btn.textContent = "Copy";
+    btn.addEventListener("click", function () {
+      var pre = box.querySelector("pre");
+      var text = pre.innerText;
+      var done = function () { btn.textContent = "Copied"; setTimeout(function () { btn.textContent = "Copy"; }, 1500); };
+      var fallback = function () {
+        var r = document.createRange(); r.selectNodeContents(pre);
+        var s = window.getSelection(); s.removeAllRanges(); s.addRange(r); btn.textContent = "Selected";
+      };
+      try { navigator.clipboard.writeText(text).then(done, fallback); } catch (e) { fallback(); }
+    });
+    box.appendChild(btn);
+  });
+</script>

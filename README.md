@@ -4,7 +4,7 @@ An AI site-reliability agent: it **watches your application logs, raises inciden
 code fix and opens a pull request**, with a human approving every step (Slack / Google Chat / email buttons).
 Built on LangChain + LangGraph with swappable LLMs (Claude, OpenAI, Groq, xAI, any OpenAI-compatible server).
 
-For a step-by-step production walk-through see **[docs/SRE-Agent-Deployment-Guide.md](docs/SRE-Agent-Deployment-Guide.md)**.
+For a step-by-step production walk-through see **[docs/SRE-Agent-Deployment-Guide.md](docs/SRE-Agent-Deployment-Guide.md)** (also as a styled page: [HTML](docs/SRE-Agent-Deployment-Guide.html), open it in a browser after cloning).
 
 ## Contents
 1. [Install on a Linux server](#install-on-a-linux-server)
