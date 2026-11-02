@@ -1,0 +1,13 @@
+langchain>=0.3
+langchain-core>=0.3
+langgraph>=0.2
+langchain-anthropic
+langchain-openai
+langchain-groq
+# langchain-google-genai   # only if LLM_PROVIDER=gemini
+httpx
+python-dotenv
+paramiko
+fastapi
+uvicorn
+pytest

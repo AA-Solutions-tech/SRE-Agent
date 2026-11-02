@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sre-agent"
+dynamic = ["version"]
+description = "Autonomous SRE agent: log monitor, incident RCA, AI fix and PR shipping"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { text = "Proprietary" }
+authors = [{ name = "AA Solutions" }]
+# Lower bounds only; exact, hash-pinned versions for release builds live in packaging/common/lock/.
+dependencies = [
+    "langchain>=0.3",
+    "langchain-core>=0.3",
+    "langgraph>=0.2",
+    "langchain-anthropic",
+    "langchain-openai",
+    "langchain-groq",
+    "httpx",
+    "python-dotenv",
+    "paramiko",
+    "fastapi",
+    "uvicorn",
+]
+
+[project.optional-dependencies]
+gemini = ["langchain-google-genai"]
+dev = ["pytest", "ruff"]
+
+[project.scripts]
+sre-agent = "sre_agent.cli:main"
+
+[tool.hatch.version]
+path = "sre_agent/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["sre_agent"]
+exclude = ["**/__pycache__", "**/*.pyc"]
+
+[tool.hatch.build.targets.sdist]
+include = ["sre_agent", "tests", "README.md", "RULES.md", "pyproject.toml"]

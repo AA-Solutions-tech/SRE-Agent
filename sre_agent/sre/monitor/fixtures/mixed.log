@@ -1,0 +1,15 @@
+[2026-10-09T10:59:55Z] [INFO] [payment-api] service started on :8001
+[2026-10-09T10:59:58Z] [INFO] [payment-api] request completed in 12ms
+[2026-10-09T11:00:01Z] [ERROR] [payment-api] MongoNetworkTimeout after 3 retries
+[2026-10-09T11:00:02Z] [INFO] [payment-api] health check ok
+[2026-10-09T11:00:03Z] [ERROR] [payment-api] checkout failed for order #8812
+[2026-10-09T11:00:04Z] [WARN] [payment-api] retry budget 80% consumed
+[2026-10-09T11:00:05Z] [DEBUG] [payment-api] connection pool stats {open: 4}
+this line is not a log line at all
+[2026-10-09T11:00:06Z] [INFO] [payment-api] request completed in 9ms
+[2026-10-09T11:00:07Z] [INFO] [worker] queue depth 0
+[2026-10-09T11:00:08Z] [WARN] [worker] slow consumer lag=4.2s
+[2026-10-09T11:00:09Z] [INFO] [payment-api] request completed in 11ms
+[2026-10-09T11:00:10Z] [INFO] [payment-api] request completed in 14ms
+[2026-10-09T11:00:11Z] [INFO] [payment-api] request completed in 10ms
+[2026-10-09T11:00:12Z] [INFO] [payment-api] request completed in 13ms

@@ -1,0 +1,25 @@
+#!/bin/sh
+# /usr/bin/sre-agent: run the bundled Python with the installed defaults.
+# As root, commands that touch state are re-run as the sre-agent user so files never end up root-owned.
+set -e
+
+: "${SRE_ENV_FILE:=/etc/sre-agent/sre-agent.env}"
+: "${SRE_HOME:=/var/lib/sre-agent}"
+: "${SRE_LOG_PATH:=/var/log/sre-agent/sre.log}"
+export SRE_ENV_FILE SRE_HOME SRE_LOG_PATH
+
+PY=/opt/sre-agent/python/bin/python3
+
+if [ "$(id -u)" = 0 ]; then
+  case "${1:-}" in
+    serve|run|doctor|paths)
+      exec runuser -u sre-agent -- env HOME="$SRE_HOME" "$0" "$@" ;;
+  esac
+fi
+
+if [ "$(id -un 2>/dev/null)" = sre-agent ]; then
+  HOME="$SRE_HOME"
+  export HOME
+fi
+
+exec "$PY" -I -m sre_agent "$@"

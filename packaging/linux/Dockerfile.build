@@ -1,0 +1,23 @@
+# Builder image for the .deb/.rpm packages. Used by packaging/build-linux.sh.
+FROM debian:12-slim
+
+ARG NFPM_VERSION=2.47.0
+ARG NFPM_SHA256_AMD64=0660ca602b2d2d2ae4781a06c692b3eeb9d437ffea05b831d76e41f4a3188783
+ARG NFPM_SHA256_ARM64=1c0f5f2999b9a974bfb04fdb0cc3306096de530ac5dbb25d739cc5f5219c919c
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl zstd binutils \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN set -eu; \
+    case "$(dpkg --print-architecture)" in \
+      amd64) A=x86_64; SHA=$NFPM_SHA256_AMD64 ;; \
+      arm64) A=arm64;  SHA=$NFPM_SHA256_ARM64 ;; \
+      *) echo "unsupported builder arch"; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/nfpm.tgz "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_Linux_${A}.tar.gz"; \
+    echo "${SHA}  /tmp/nfpm.tgz" | sha256sum -c -; \
+    tar -xzf /tmp/nfpm.tgz -C /usr/local/bin nfpm; \
+    rm /tmp/nfpm.tgz; nfpm --version
+
+WORKDIR /work

@@ -1,0 +1,49 @@
+[Unit]
+Description=SRE Agent (monitor -> incident -> coding -> ship)
+Documentation=https://github.com/AA-Solutions-tech/SRE-Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=sre-agent
+Group=sre-agent
+# Config is parsed by the app (python-dotenv), not EnvironmentFile=, so inline "# comments" work.
+Environment=SRE_ENV_FILE=/etc/sre-agent/sre-agent.env
+Environment=SRE_HOME=/var/lib/sre-agent
+Environment=SRE_LOG_PATH=/var/log/sre-agent/sre.log
+Environment=HOME=/var/lib/sre-agent
+WorkingDirectory=/var/lib/sre-agent
+ExecStartPre=/usr/bin/sre-agent doctor --quick
+ExecStart=/usr/bin/sre-agent serve
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0027
+
+# Hardening. If TEST_CMD needs to write elsewhere or a toolchain on PATH, add a drop-in:
+#   sudo systemctl edit sre-agent   ->   [Service] ReadWritePaths=/path  Environment=PATH=/opt/node/bin:/usr/bin
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/sre-agent /var/log/sre-agent
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+PrivateDevices=true
+ProtectClock=true
+ProtectHostname=true
+ProtectKernelLogs=true
+RestrictNamespaces=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# Not set on purpose: MemoryDenyWriteExecute (breaks JIT runtimes such as node used by TEST_CMD).
+
+[Install]
+WantedBy=multi-user.target

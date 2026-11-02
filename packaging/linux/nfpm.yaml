@@ -1,0 +1,65 @@
+# One spec for both .deb and .rpm. Built by packaging/linux/build.sh inside the builder container:
+#   VERSION=1.0.0 ARCH=amd64 nfpm pkg -f packaging/linux/nfpm.yaml -p deb -t dist/
+name: sre-agent
+arch: ${ARCH}            # amd64 | arm64 (nfpm maps to x86_64 / aarch64 for rpm)
+platform: linux
+version: ${VERSION}
+release: "1"
+section: admin
+priority: optional
+maintainer: AA Solutions <AA-Solutions-tech@users.noreply.github.com>
+vendor: AA Solutions
+homepage: https://github.com/AA-Solutions-tech/SRE-Agent
+license: Proprietary
+description: |
+  Autonomous SRE agent.
+  Watches application logs, files incidents with a root-cause analysis, can write a fix
+  and ship it as a pull request after human approval. Ships its own Python 3.12 runtime
+  in /opt/sre-agent, runs as the sre-agent systemd service.
+
+depends:
+  - git
+  - ca-certificates
+overrides:
+  deb:
+    depends: [git, ca-certificates, passwd, util-linux]
+    recommends: [openssh-client]
+  rpm:
+    depends: [git-core, ca-certificates, shadow-utils, util-linux]
+    recommends: [openssh-clients]
+
+contents:
+  - src: build/stage/opt/sre-agent/
+    dst: /opt/sre-agent/
+    type: tree
+  - src: packaging/linux/sre-agent
+    dst: /usr/bin/sre-agent
+    file_info: { mode: 0755 }
+  - src: packaging/linux/sre-agent.service
+    dst: /usr/lib/systemd/system/sre-agent.service
+    file_info: { mode: 0644 }
+  # Template only. /etc/sre-agent/sre-agent.env is created from it by postinstall and is NOT owned by the
+  # package, so upgrades never touch or prompt about it and removal keeps it.
+  - src: packaging/common/sre-agent.env.example
+    dst: /usr/share/sre-agent/sre-agent.env.example
+    file_info: { mode: 0644 }
+  - dst: /etc/sre-agent
+    type: dir
+    file_info: { mode: 0750 }
+  - dst: /var/lib/sre-agent
+    type: dir
+    file_info: { mode: 0750 }
+  - dst: /var/log/sre-agent
+    type: dir
+    file_info: { mode: 0750 }
+
+scripts:
+  preinstall: packaging/linux/scripts/preinstall.sh
+  postinstall: packaging/linux/scripts/postinstall.sh
+  preremove: packaging/linux/scripts/preremove.sh
+  postremove: packaging/linux/scripts/postremove.sh
+
+rpm:
+  compression: zstd
+deb:
+  compression: zstd

@@ -1,0 +1,108 @@
+name: linux-packages
+
+# PRs touching packaging: build + smoke test amd64.  Tag v*: build amd64 + arm64, smoke test, publish a GitHub Release.
+on:
+  pull_request:
+    paths: ["packaging/**", "sre_agent/**", "pyproject.toml", ".github/workflows/linux-packages.yml"]
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: "pip install --require-hashes --only-binary=:all: -r packaging/common/requirements.lock && pip install pytest"
+      - run: python -m pytest -q
+
+  build:
+    needs: test
+    strategy:
+      matrix:
+        include:
+          - { arch: amd64, runner: ubuntu-latest }
+          - { arch: arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: tag must match sre_agent.__version__
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          v=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' sre_agent/__init__.py)
+          [ "v$v" = "${GITHUB_REF_NAME}" ] || { echo "tag ${GITHUB_REF_NAME} != version $v"; exit 1; }
+      - name: build packages (+ a fake newer version for the upgrade test)
+        run: |
+          v=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' sre_agent/__init__.py)
+          mkdir -p dist upgrade
+          EXTRA_VERSION=$v.99 bash packaging/build-linux.sh ${{ matrix.arch }}
+          sudo mv dist/*$v.99* upgrade/
+      - uses: actions/upload-artifact@v4
+        with: { name: "packages-${{ matrix.arch }}", path: dist/ }
+      - uses: actions/upload-artifact@v4
+        with: { name: "upgrade-${{ matrix.arch }}", path: upgrade/ }
+
+  smoke:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+        distro: ["ubuntu:22.04", "ubuntu:24.04", "debian:12", "rockylinux/rockylinux:8", "rockylinux/rockylinux:9", "amazonlinux:2023"]
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: "packages-${{ matrix.arch }}", path: dist }
+      - uses: actions/download-artifact@v4
+        with: { name: "upgrade-${{ matrix.arch }}", path: dist }
+      - run: ARCH=${{ matrix.arch }} bash packaging/linux/test/run-smoke.sh "${{ matrix.distro }}"
+
+  systemd:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: packages-amd64, path: dist }
+      - uses: actions/download-artifact@v4
+        with: { name: upgrade-amd64, path: dist }
+      - name: service lifecycle under real systemd
+        run: |
+          v=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' sre_agent/__init__.py)
+          printf 'FROM debian:12\nRUN apt-get update && apt-get install -y systemd systemd-sysv procps curl\nCMD ["/lib/systemd/systemd"]\n' \
+            | docker build -t sre-systemd-test -
+          docker run -d --name sre-systemd-test --privileged --cgroupns=host --tmpfs /run --tmpfs /run/lock \
+            -v "$PWD/dist:/dist:ro" -v "$PWD/packaging/linux/test:/t:ro" sre-systemd-test
+          sleep 3
+          docker exec sre-systemd-test sh /t/systemd.sh "/dist/sre-agent_${v}-1_amd64.deb" "/dist/sre-agent_${v}.99-1_amd64.deb"
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [smoke, systemd]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { pattern: "packages-*", path: dist, merge-multiple: true }
+      - run: cd dist && sha256sum *.deb *.rpm > SHA256SUMS && cat SHA256SUMS
+      - name: publish the GitHub Release
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          v=${GITHUB_REF_NAME#v}
+          cat > notes.md <<EOF
+          SRE Agent ${GITHUB_REF_NAME}
+
+          Ubuntu/Debian: \`sudo apt install ./sre-agent_${v}-1_amd64.deb\`
+          RHEL/Rocky/Amazon Linux: \`sudo dnf install ./sre-agent-${v}-1.x86_64.rpm\`
+          Then edit /etc/sre-agent/sre-agent.env, run \`sudo sre-agent doctor\`, and \`sudo systemctl start sre-agent\`.
+          EOF
+          prerelease=$(case "$v" in *-*|*rc*) echo --prerelease ;; esac)
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" \
+            --notes-file notes.md $prerelease
