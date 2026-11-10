@@ -1,6 +1,6 @@
 # SRE Agent: deployment guide (Ubuntu / Debian / RHEL, systemd or pm2)
 
-Version 2.0.0 · For anyone who installs the `.deb` or `.rpm` package on one Linux server and runs background services
+Version 2.2.0 · For anyone who installs the `.deb` or `.rpm` package on one Linux server and runs background services
 with **systemd** or **pm2**.
 
 Time needed: about 15 minutes (2 to install, 5 for the questions, the rest for checks).
@@ -43,10 +43,10 @@ The agent raises incidents only for log lines it can read. Each error line must 
 ## Step 1. Install the package
 
 ```bash
-wget https://github.com/AA-Solutions-tech/SRE-Agent/releases/download/v2.0.0/sre-agent_2.0.0-1_amd64.deb
-wget https://github.com/AA-Solutions-tech/SRE-Agent/releases/download/v2.0.0/SHA256SUMS
-sha256sum -c --ignore-missing SHA256SUMS          # expect: sre-agent_2.0.0-1_amd64.deb: OK
-sudo apt install ./sre-agent_2.0.0-1_amd64.deb
+wget https://github.com/AA-Solutions-tech/SRE-Agent/releases/download/v2.2.0/sre-agent_2.2.0-1_amd64.deb
+wget https://github.com/AA-Solutions-tech/SRE-Agent/releases/download/v2.2.0/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS          # expect: sre-agent_2.2.0-1_amd64.deb: OK
+sudo apt install ./sre-agent_2.2.0-1_amd64.deb
 ```
 
 You should see this at the end:
@@ -54,14 +54,14 @@ You should see this at the end:
 ```
 sre-agent: created /etc/sre-agent/sre-agent.env
 
-SRE Agent 2.0.0 installed. The service is enabled but NOT started yet.
+SRE Agent 2.2.0 installed. The service is enabled but NOT started yet.
   Configure it:   sudo sre-agent setup
 ```
 
 **Verify the install**
 
 ```bash
-sre-agent version                     # sre-agent 2.0.0
+sre-agent version                     # sre-agent 2.2.0
 id sre-agent                          # the service user exists
 sudo ls -l /etc/sre-agent/            # sre-agent.env  -rw-r----- root sre-agent
 ```
@@ -69,10 +69,10 @@ sudo ls -l /etc/sre-agent/            # sre-agent.env  -rw-r----- root sre-agent
 **RHEL / Rocky / Alma 8-9 / Amazon Linux 2023** use the `.rpm` instead (install `acl` with `dnf` in Step 3):
 
 ```bash
-sudo dnf install https://github.com/AA-Solutions-tech/SRE-Agent/releases/download/v2.0.0/sre-agent-2.0.0-1.x86_64.rpm
+sudo dnf install https://github.com/AA-Solutions-tech/SRE-Agent/releases/download/v2.2.0/sre-agent-2.2.0-1.x86_64.rpm
 ```
 
-On arm64 servers use `sre-agent_2.0.0-1_arm64.deb` / `sre-agent-2.0.0-1.aarch64.rpm`.
+On arm64 servers use `sre-agent_2.2.0-1_arm64.deb` / `sre-agent-2.2.0-1.aarch64.rpm`.
 
 What the install did: it put the program in `/opt/sre-agent`, created the `sre-agent` system user, created the
 config file with a **unique API key and approval secret for this server**, and registered the `sre-agent` systemd
@@ -354,7 +354,7 @@ sudo sre-agent doctor
 ps -o user=,cmd= -C python3 | grep sre_agent      # sre-agent  ... -m sre_agent serve
 
 # 3. Web API answers
-curl -s localhost:8000/health                      # {"ok":true,"version":"2.0.0",...}
+curl -s localhost:8000/health                      # {"ok":true,"version":"2.2.0",...}
 
 # 4. API is protected
 curl -s -o /dev/null -w "%{http_code}\n" localhost:8000/issues                              # 401
@@ -420,6 +420,50 @@ sudo sre-agent setup --only code,automation
 ```
 
 ---
+
+## Upgrade an existing install (2.0.x / 2.1.x to 2.2.0)
+
+Installing the new package on top of the old one keeps your settings, data and SSH key. The package stops the service,
+saves the database to `/var/lib/sre-agent/backups/` (5 newest kept), replaces the program, leaves
+`/etc/sre-agent/sre-agent.env` untouched and restarts the service if it was running.
+
+1. **Check what you run:** `sre-agent version`; `sudo systemctl is-active sre-agent` (or `sudo pm2 list`).
+2. **Safety copy (optional):** `sudo tar czf ~/sre-agent-backup-$(date +%F).tgz /etc/sre-agent /var/lib/sre-agent`
+3. **Finish open approval cards.** Links and buttons sent by an older version stop working after the upgrade.
+4. **Download and verify:**
+   ```bash
+   VERSION=2.2.0
+   wget https://github.com/AA-Solutions-tech/SRE-Agent/releases/download/v$VERSION/sre-agent_$VERSION-1_amd64.deb
+   wget https://github.com/AA-Solutions-tech/SRE-Agent/releases/download/v$VERSION/SHA256SUMS
+   sha256sum -c --ignore-missing SHA256SUMS      # expect: ...: OK
+   ```
+5. **Install:** `sudo apt install ./sre-agent_$VERSION-1_amd64.deb` (RHEL: `sudo dnf upgrade <rpm url>`). With pm2, then
+   `sudo pm2 restart sre-agent`.
+6. **Check:** `sre-agent version` (2.2.0), `sudo sre-agent doctor` (read every WARN), `curl -s localhost:8000/health`.
+7. **Prove monitoring works:** write one test error line to the watched log (Step 6) and reject the test card.
+
+| Change | What you will notice | Old behaviour |
+|---|---|---|
+| Model calls | No custom `temperature` is sent, so real AI analysis runs | `LLM_TEMPERATURE=0.2` |
+| Fallback cards | Start with "AI ANALYSIS UNAVAILABLE" and the reason | - |
+| Severity | Inbound 4xx, bot probes, expected CORS = LOW (daily digest, no card); rate limit / external / bad data / security = MEDIUM | `SEVERITY_DEFAULTS=false` |
+| Grouping | File names, paths, quoted values, hosts ignored when grouping | `FINGERPRINT_STRICT=true` |
+| First read of a log | Watch mode starts at the log's end | `MONITOR_REPLAY_BACKLOG=true` |
+| Cards | New "Ignore similar" button | - |
+| Approval links | Confirm page first; single action; expire after 7 days | - |
+| Agent log | Idle polls no longer printed | `SRE_TRACE_DEBUG=true` |
+
+**Roll back:** `sudo apt install --allow-downgrades ./sre-agent_2.0.0-1_amd64.deb`, stop the service, copy the wanted file from
+`/var/lib/sre-agent/backups/` over `/var/lib/sre-agent/starter.db` (as `sre-agent`), start the service.
+**No automatic updates:** the packages are not in an apt/dnf repository; download each release yourself.
+
+## New settings in 2.1 and 2.2 (all optional)
+
+`MONITOR_LOG_PATH` (several logs: `/var/log/a.log@svc-a, /var/log/b.log@svc-b`), `IGNORE_PATTERNS` / `IGNORE_FILE`,
+`SEVERITY_RULES_FILE` / `SERVICE_SEVERITY`, `LOW_DIGEST_HOURS` / `LOW_ESCALATE_COUNT`, `SLACK_BOT_TOKEN` /
+`SLACK_SIGNING_SECRET` / `SLACK_ALLOWED_USERS` (Slack in-app buttons; Interactivity URL `https://<address>/slack/interactions`),
+`APPROVAL_LINK_HOURS`, `ESCALATE_AFTER_HOURS`, `LLM_SELFTEST_ON_START`. Edit `/etc/sre-agent/sre-agent.env`, then
+`sudo systemctl restart sre-agent` and run `sudo sre-agent doctor`.
 
 ## Troubleshooting
 

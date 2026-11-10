@@ -69,6 +69,11 @@
   .checks { list-style: none; padding: 0; display: grid; gap: 8px; }
   .checks li { display: flex; gap: 10px; align-items: flex-start; }
   .checks input { margin-top: 5px; accent-color: var(--accent); width: 16px; height: 16px; flex: none; }
+  .path { display: block; padding: 14px 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); text-decoration: none; }
+  .path:hover, .path:focus-visible { border-color: var(--accent); background: var(--accent-soft); outline: none; }
+  .path b { display: block; color: var(--accent); font-size: 17px; }
+  .path span { color: var(--muted); font-size: 14.5px; }
+  .why { color: var(--muted); font-size: 15px; margin: 6px 0 0; }
   .tag { font: 500 12px var(--f-mono); padding: 2px 7px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
   @media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
 </style>
@@ -77,6 +82,7 @@
   <nav class="toc" aria-label="Steps">
     <b>Steps</b>
     <ol>
+      <li><a href="#paths">Which path are you on?</a></li>
       <li><a href="#prereq">0 · Before you start</a></li>
       <li><a href="#install">1 · Install</a></li>
       <li><a href="#runner">2 · systemd or pm2</a></li>
@@ -85,15 +91,26 @@
       <li><a href="#start">5 · Start it</a></li>
       <li><a href="#verify">6 · Verify</a></li>
       <li><a href="#ops">7 · Day-to-day</a></li>
+      <li><a href="#upgrade">Upgrade an existing install</a></li>
+      <li><a href="#newsettings">New settings (2.1 / 2.2)</a></li>
       <li><a href="#trouble">Troubleshooting</a></li>
     </ol>
   </nav>
 
   <main>
-    <div class="eyebrow">Deployment guide · v2.0.0</div>
+    <div class="eyebrow">Deployment guide · v2.2.0</div>
     <h1>Deploy SRE Agent on Ubuntu, Debian or RHEL</h1>
-    <p class="lead">Install the <code>.deb</code> package on one Linux server and run it as a background service with systemd or pm2.</p>
+    <p class="lead">Install the <code>.deb</code> or <code>.rpm</code> package on one Linux server and run it as a background service with systemd or pm2. This guide covers a <b>new install</b> and an <b>upgrade</b> of an older version.</p>
     <div class="meta"><span><b>~15 min</b> total</span><span><b>2 min</b> install</span><span><b>5 min</b> questions</span><span>rest: checks</span></div>
+
+    <section id="paths">
+      <h2>Which path are you on?</h2>
+      <div class="cols">
+        <a class="path" href="#prereq"><b>New install</b><span>SRE Agent is not on this server yet. Follow steps 0 to 7 in order (about 15 minutes).</span></a>
+        <a class="path" href="#upgrade"><b>Upgrade</b><span>You already run 2.0.x or 2.1.x. Go to “Upgrade an existing install” (about 5 minutes). Your settings and data are kept.</span></a>
+      </div>
+      <p class="why">Not sure? Run <code>sre-agent version</code>. If it prints a version, you are upgrading. If the command is not found, it is a new install.</p>
+    </section>
 
     <section id="prereq">
       <h2><span class="n">0</span>Have these ready before you start</h2>
@@ -126,20 +143,22 @@
 
     <section id="install">
       <h2><span class="n">1</span>Install the package</h2>
-<div class="code"><pre>wget https://github.com/AA-Solutions-tech/SRE-Agent/releases/download/v2.0.0/sre-agent_2.0.0-1_amd64.deb
-wget https://github.com/AA-Solutions-tech/SRE-Agent/releases/download/v2.0.0/SHA256SUMS
-sha256sum -c --ignore-missing SHA256SUMS          <span class="c"># expect: sre-agent_2.0.0-1_amd64.deb: OK</span>
-sudo apt install ./sre-agent_2.0.0-1_amd64.deb</pre></div>
+<div class="code"><pre>wget https://github.com/AA-Solutions-tech/SRE-Agent/releases/download/v2.2.0/sre-agent_2.2.0-1_amd64.deb
+wget https://github.com/AA-Solutions-tech/SRE-Agent/releases/download/v2.2.0/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS          <span class="c"># expect: sre-agent_2.2.0-1_amd64.deb: OK</span>
+sudo apt install ./sre-agent_2.2.0-1_amd64.deb</pre></div>
+      <p class="why">What these commands do: the first downloads the package, the second downloads the list of expected checksums, the third checks that your download is not corrupted or tampered with (it must print <code>OK</code>), and the fourth installs it. <code>apt install ./file.deb</code> (with the <code>./</code>) also pulls in the one dependency, <code>git</code>. The package carries its own Python, so nothing else is installed on your system.</p>
       <p>You should see this at the end:</p>
 <div class="code"><pre>sre-agent: created /etc/sre-agent/sre-agent.env
 
-SRE Agent 2.0.0 installed. The service is enabled but NOT started yet.
+SRE Agent 2.2.0 installed. The service is enabled but NOT started yet.
   Configure it:   sudo sre-agent setup</pre></div>
+      <p class="why">Everything is installed under <code>/opt/sre-agent</code>. Your settings go to <code>/etc/sre-agent/sre-agent.env</code> and data (database, SSH key, repo clone) to <code>/var/lib/sre-agent</code>, so a later upgrade never touches them.</p>
       <h3>RHEL, Rocky, Alma, Amazon Linux</h3>
-      <p>Use the <code>.rpm</code> instead (install <code>acl</code> with <code>dnf</code> in step 3). On arm64 use <code>sre-agent_2.0.0-1_arm64.deb</code> or <code>sre-agent-2.0.0-1.aarch64.rpm</code>.</p>
-<div class="code"><pre>sudo dnf install https://github.com/AA-Solutions-tech/SRE-Agent/releases/download/v2.0.0/sre-agent-2.0.0-1.x86_64.rpm</pre></div>
+      <p>Use the <code>.rpm</code> instead (install <code>acl</code> with <code>dnf</code> in step 3). On arm64 use <code>sre-agent_2.2.0-1_arm64.deb</code> or <code>sre-agent-2.2.0-1.aarch64.rpm</code>.</p>
+<div class="code"><pre>sudo dnf install https://github.com/AA-Solutions-tech/SRE-Agent/releases/download/v2.2.0/sre-agent-2.2.0-1.x86_64.rpm</pre></div>
       <h3>Verify the install</h3>
-<div class="code"><pre>sre-agent version                     <span class="c"># sre-agent 2.0.0</span>
+<div class="code"><pre>sre-agent version                     <span class="c"># sre-agent 2.2.0</span>
 id sre-agent                          <span class="c"># the service user exists</span>
 sudo ls -l /etc/sre-agent/            <span class="c"># sre-agent.env  -rw-r----- root sre-agent</span></pre></div>
       <p>The install put the program in <code>/opt/sre-agent</code>, created the <code>sre-agent</code> system user, wrote the config file with a <b>unique API key and approval secret for this server</b>, and registered the <code>sre-agent</code> systemd service (enabled, not started).</p>
@@ -180,6 +199,7 @@ sudo -u sre-agent head -1 /home/deploy/.pm2/logs/orders-api-error.log</pre></div
       <p>Add these lines in the editor, then save:</p>
 <div class="code"><pre>[Service]
 ProtectHome=read-only</pre></div>
+      <p class="why">New in 2.1: <code>sudo sre-agent doctor</code> checks every watched file and, if one cannot be read, prints the exact <code>setfacl</code> and <code>ProtectHome</code> commands to fix it.</p>
     </section>
 
     <section id="setup">
@@ -250,6 +270,9 @@ ProtectHome=read-only</pre></div>
           </table></div>
         </div>
       </div>
+      <div class="note"><b>Several logs or services (new in 2.1)</b>One install can watch many logs. In <code>/etc/sre-agent/sre-agent.env</code> set <code>MONITOR_LOG_PATH</code> to a comma-separated list, each with its service name after an <code>@</code>:<br>
+        <code>/var/log/qa/error.log@qa-api, /var/log/prod/error.log@prod-api, docker:web@storefront</code><br>
+        The service name you give is used on the incident even when the log line names something else. Then run <code>sudo systemctl restart sre-agent</code>.</div>
       <p>For SSH, the setup then asks three more things:</p>
       <ul>
         <li><code>Create one for the agent now? [Y/n]</code>: press Enter. It prints a public key starting <code>ssh-ed25519 ...</code>. <b>Copy it.</b></li>
@@ -273,6 +296,8 @@ sudo chmod 700 ~logreader/.ssh &amp;&amp; sudo chmod 600 ~logreader/.ssh/authori
         <tr><td>Listen on</td><td>Enter (<code>127.0.0.1</code>) and put nginx/Caddy in front. Choose <code>2</code> only with no proxy and a firewalled port</td></tr>
         <tr><td>Port</td><td>Enter for <code>8000</code>, or another free port</td></tr>
       </table></div>
+
+      <p class="why">Why this matters: the Approve / Reject buttons are links to this address, so it must be one your team can open. With <code>localhost</code> they open the reader's own computer and nothing is recorded. The alternative is Slack's in-app buttons, which need no public page (see New settings below). <code>sre-agent doctor</code> warns when the address is loopback.</p>
 
       <h3>4.5 Code fixes (optional)</h3>
 <div class="code"><pre>  Configure the repository, tests and GitHub pull requests now? [y/N]:</pre></div>
@@ -347,7 +372,7 @@ sudo sre-agent doctor
 ps -o user=,cmd= -C python3 | grep sre_agent      <span class="c"># sre-agent  ... -m sre_agent serve</span>
 
 <span class="c"># 3. Web API answers</span>
-curl -s localhost:8000/health                      <span class="c"># {"ok":true,"version":"2.0.0",...}</span>
+curl -s localhost:8000/health                      <span class="c"># {"ok":true,"version":"2.2.0",...}</span>
 
 <span class="c"># 4. API is protected</span>
 curl -s -o /dev/null -w "%{http_code}\n" localhost:8000/issues                              <span class="c"># 401</span>
@@ -387,13 +412,98 @@ sudo grep -m1 "auto mode ON" /var/log/sre-agent/sre.log          <span class="c"
         <tr><td>Change settings</td><td><code>sudo sre-agent setup --only notifications</code> (or <code>llm</code>, <code>logs</code>, <code>web</code>, <code>code</code>, <code>automation</code>), accept the restart</td><td>Same, answer <code>n</code> to start, then <code>sudo pm2 restart sre-agent</code></td></tr>
         <tr><td>Restart</td><td><code>sudo systemctl restart sre-agent</code></td><td><code>sudo pm2 restart sre-agent</code></td></tr>
         <tr><td>Stop</td><td><code>sudo systemctl stop sre-agent</code></td><td><code>sudo pm2 stop sre-agent</code></td></tr>
-        <tr><td>Upgrade</td><td><code>sudo apt install ./sre-agent_&lt;new&gt;-1_amd64.deb</code> (settings kept, DB backed up, restarted if running)</td><td>Same, then <code>sudo pm2 restart sre-agent</code></td></tr>
+        <tr><td>Upgrade</td><td><code>sudo apt install ./sre-agent_&lt;new&gt;-1_amd64.deb</code> (settings kept, DB backed up, restarted if running). Full steps: see <a href="#upgrade">Upgrade an existing install</a></td><td>Same, then <code>sudo pm2 restart sre-agent</code></td></tr>
         <tr><td>Back up</td><td colspan="2"><code>sudo tar czf sre-agent-backup.tgz /etc/sre-agent /var/lib/sre-agent</code></td></tr>
         <tr><td>Remove</td><td><code>sudo apt remove sre-agent</code> keeps settings and data; <code>sudo apt purge sre-agent</code> also deletes settings</td><td><code>sudo pm2 delete sre-agent &amp;&amp; sudo pm2 save</code>, then the same</td></tr>
       </table></div>
       <p>Enable code fixes later: clone the repo for the service user, then rerun setup for <code>code</code> and <code>automation</code>.</p>
 <div class="code"><pre>sudo -u sre-agent git clone https://github.com/yourorg/orders-api.git /var/lib/sre-agent/repo
 sudo sre-agent setup --only code,automation</pre></div>
+    </section>
+
+    <section id="upgrade">
+      <h2>Upgrade an existing install</h2>
+      <p class="lead">For servers already running 2.0.x or 2.1.x. Installing the new package on top of the old one keeps your settings, your data and your SSH key.</p>
+      <div class="note"><b>What the package does for you</b>It stops the running service, saves a copy of the database to <code>/var/lib/sre-agent/backups/</code> (the 5 newest are kept), replaces the program files, leaves <code>/etc/sre-agent/sre-agent.env</code> exactly as it is, and starts the service again if it was running. The database is upgraded the first time the new version starts.</div>
+
+      <h3>U1 · Check what you run now</h3>
+<div class="code"><pre>sre-agent version                  <span class="c"># e.g. sre-agent 2.0.0</span>
+sudo systemctl is-active sre-agent <span class="c"># active, or use: sudo pm2 list</span></pre></div>
+      <p class="why">Tells you which version you are leaving and whether it is run by systemd or pm2, which decides the restart in step U3.</p>
+
+      <h3>U2 · Make a safety copy (optional, 10 seconds)</h3>
+<div class="code"><pre>sudo tar czf ~/sre-agent-backup-$(date +%F).tgz /etc/sre-agent /var/lib/sre-agent</pre></div>
+      <p class="why">The package already backs up the database, but this also saves your settings and SSH key, so you can restore everything by hand if you ever need to.</p>
+
+      <h3>U3 · Answer or finish open approval cards first</h3>
+      <p class="why">Approval links and buttons sent by an older version stop working after the upgrade (links are now tied to one action and expire after 7 days). Approve or reject pending cards before upgrading. If you forget, the issue sends a fresh card the next time the error happens.</p>
+
+      <h3>U4 · Download and verify the new package</h3>
+<div class="code"><pre>VERSION=2.2.0
+wget https://github.com/AA-Solutions-tech/SRE-Agent/releases/download/v$VERSION/sre-agent_$VERSION-1_amd64.deb
+wget https://github.com/AA-Solutions-tech/SRE-Agent/releases/download/v$VERSION/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS          <span class="c"># expect: sre-agent_2.2.0-1_amd64.deb: OK</span></pre></div>
+      <p class="why">Use <code>_arm64.deb</code> on an ARM server. Do not install a file whose checksum line does not say <code>OK</code>.</p>
+
+      <h3>U5 · Install it</h3>
+<div class="code"><pre><span class="c"># Ubuntu / Debian</span>
+sudo apt install ./sre-agent_$VERSION-1_amd64.deb
+
+<span class="c"># RHEL / Rocky / Alma / Amazon Linux</span>
+sudo dnf upgrade https://github.com/AA-Solutions-tech/SRE-Agent/releases/download/v$VERSION/sre-agent-$VERSION-1.x86_64.rpm</pre></div>
+      <p class="why">You should see <code>sre-agent: database backed up to /var/lib/sre-agent/backups/...</code>. Because the file is installed on top of the old one, this is an upgrade, not a fresh install, and the setup wizard is not run again.</p>
+      <p><b>If you run it with pm2</b> the package cannot restart it for you:</p>
+<div class="code"><pre>sudo pm2 restart sre-agent</pre></div>
+
+      <h3>U6 · Check the result</h3>
+<div class="code"><pre>sre-agent version                    <span class="c"># sre-agent 2.2.0</span>
+sudo sre-agent doctor                <span class="c"># every required line OK; read any WARN</span>
+sudo systemctl status sre-agent      <span class="c"># active (running)</span>
+curl -s localhost:8000/health        <span class="c"># {"ok":true,"version":"2.2.0",...}</span></pre></div>
+      <p class="why"><code>doctor</code> has new checks in 2.2: it makes one tiny live call to your AI model (so a wrong key, model or parameter is reported at once), tests that every watched log can be read, and warns if the approval-link address is <code>localhost</code>. Fix any <code>WARN</code>/<code>FAIL</code> it explains.</p>
+
+      <h3>U7 · Prove monitoring still works</h3>
+      <p>Repeat the test from <a href="#verify">Step 6</a>: write one test error line to the watched log. An issue and a card should arrive within seconds. Reject the test card.</p>
+
+      <h3>What changes for you after upgrading</h3>
+      <div class="tbl"><table>
+        <tr><th>Change</th><th>What you will notice</th><th>If you want the old behaviour</th></tr>
+        <tr><td>Model calls</td><td>The agent no longer sends a custom <code>temperature</code>. Newer AI models rejected it, which made every analysis fall back to a basic template. Real AI analysis now runs.</td><td><code>LLM_TEMPERATURE=0.2</code> (only if your model accepts it)</td></tr>
+        <tr><td>Fallback cards</td><td>A card built without the AI starts with <b>AI ANALYSIS UNAVAILABLE</b> and the reason, and one alert is raised.</td><td>-</td></tr>
+        <tr><td>Severity</td><td>Inbound 4xx errors, bot probes (<code>wp-login.php</code>, <code>favicon.ico</code>) and expected CORS rejections are <b>LOW</b>: counted quietly and listed in a daily digest, no card. Rate limits, external services, bad data and security probes are <b>MEDIUM</b>.</td><td><code>SEVERITY_DEFAULTS=false</code> (everything stays HIGH)</td></tr>
+        <tr><td>Grouping</td><td>File names, paths, quoted values, hosts and short codes are ignored when grouping, so the same error with a different file name is one incident.</td><td><code>FINGERPRINT_STRICT=true</code></td></tr>
+        <tr><td>First read of a log</td><td>In watch mode a log the agent has never read starts at its <b>end</b>: only new errors, no flood of old ones.</td><td><code>MONITOR_REPLAY_BACKLOG=true</code> for the first start</td></tr>
+        <tr><td>Cards</td><td>New <b>Ignore similar</b> button adds a standing rule so that error never raises a card again.</td><td>-</td></tr>
+        <tr><td>Approval links</td><td>Opening a link shows a <b>Confirm</b> page first; links are single-action and expire after 7 days (<code>APPROVAL_LINK_HOURS</code>).</td><td>-</td></tr>
+        <tr><td>Agent log</td><td>Idle polls are no longer printed, so <code>/var/log/sre-agent/sre.log</code> stays small.</td><td><code>SRE_TRACE_DEBUG=true</code></td></tr>
+      </table></div>
+
+      <h3>Roll back</h3>
+<div class="code"><pre>sudo apt install --allow-downgrades ./sre-agent_2.0.0-1_amd64.deb       <span class="c"># the old package file</span>
+sudo systemctl stop sre-agent
+ls /var/lib/sre-agent/backups/                                          <span class="c"># starter.db.&lt;old-version&gt;.&lt;time&gt;</span>
+sudo -u sre-agent cp /var/lib/sre-agent/backups/starter.db.2.0.0.&lt;time&gt; /var/lib/sre-agent/starter.db
+sudo systemctl start sre-agent</pre></div>
+      <p class="why">Needed only if something goes wrong. Restoring the database copy puts back the exact data from before the upgrade (issues recorded since then are lost). Downloads of every version stay on the Releases page.</p>
+      <div class="note warn"><b>No automatic updates</b>These packages are not in an apt or dnf repository, so <code>apt upgrade</code> will not find a new version. Download and install each release yourself, as above.</div>
+    </section>
+
+    <section id="newsettings">
+      <h2>New settings in 2.1 and 2.2</h2>
+      <p>All are optional and the defaults work. Add them to <code>/etc/sre-agent/sre-agent.env</code> and run <code>sudo systemctl restart sre-agent</code>. <code>sudo sre-agent doctor</code> checks the result.</p>
+      <div class="tbl"><table>
+        <tr><th>Setting</th><th>What it does</th><th>Example</th></tr>
+        <tr><td><code>MONITOR_LOG_PATH</code></td><td>Watch several logs, each with its own service name</td><td><code>/var/log/qa/err.log@qa-api, /var/log/prod/err.log@prod-api</code></td></tr>
+        <tr><td><code>IGNORE_PATTERNS</code> / <code>IGNORE_FILE</code></td><td>Regexes for errors that are counted but never become an incident</td><td><code>favicon\.ico;;wp-login</code></td></tr>
+        <tr><td><code>SEVERITY_RULES_FILE</code> / <code>SERVICE_SEVERITY</code></td><td>Your own severity rules, or a default per service</td><td><code>bot-probe=LOW,internal-tool=MEDIUM</code></td></tr>
+        <tr><td><code>LOW_DIGEST_HOURS</code> / <code>LOW_ESCALATE_COUNT</code></td><td>How often the LOW digest is sent (0 = never) and after how many repeats a LOW issue becomes a card</td><td><code>24</code> / <code>200</code></td></tr>
+        <tr><td><code>SLACK_BOT_TOKEN</code>, <code>SLACK_SIGNING_SECRET</code>, <code>SLACK_ALLOWED_USERS</code></td><td>Slack in-app buttons: decide inside Slack, no public page, and the decision records who pressed it</td><td>see <b>Slack integration guide</b></td></tr>
+        <tr><td><code>APPROVAL_LINK_HOURS</code></td><td>How long Approve / Reject links work</td><td><code>168</code></td></tr>
+        <tr><td><code>ESCALATE_AFTER_HOURS</code></td><td>Escalate a card nobody answered</td><td><code>8</code></td></tr>
+        <tr><td><code>LLM_SELFTEST_ON_START</code></td><td>One tiny model call at start-up to catch a wrong key or model</td><td><code>true</code></td></tr>
+        <tr><td><code>FINGERPRINT_STRICT</code>, <code>SEVERITY_DEFAULTS</code>, <code>MONITOR_REPLAY_BACKLOG</code></td><td>Switches that restore the pre-2.1 behaviour (see the table above)</td><td><code>false</code> / <code>true</code> / <code>false</code></td></tr>
+      </table></div>
+      <div class="note"><b>Slack buttons, in short</b>In api.slack.com choose <b>Create New App → From scratch</b>, switch on Incoming Webhooks and Interactivity (request URL <code>https://&lt;your address&gt;/slack/interactions</code>), add the bot scope <code>chat:write</code>, then copy the bot token and signing secret into the two settings above. Slack must be able to reach that address, so it needs to be public HTTPS.</div>
     </section>
 
     <section id="trouble">
@@ -409,6 +519,9 @@ sudo sre-agent setup --only code,automation</pre></div>
         <tr><td>Issue exists but no Slack/email message</td><td>Wrong webhook / SMTP details</td><td><code>sudo sre-agent setup --only notifications</code>; check <code>sudo grep -i notify /var/log/sre-agent/sre.log</code></td></tr>
         <tr><td><code>doctor</code>: <code>[FAIL] SSH log source</code> / <code>SSH reachable</code></td><td>Key not authorised, host key not trusted, or firewall</td><td>Step 4.3; test with <code>sudo -u sre-agent ssh -i /var/lib/sre-agent/.ssh/id_ed25519 logreader@10.0.1.25 true</code></td></tr>
         <tr><td><code>doctor</code>: <code>[WARN] TEST_CMD 'npm' not on PATH</code></td><td>Node installed for another user (nvm)</td><td>Install node system-wide, or <code>sudo systemctl edit sre-agent</code> → <code>[Service]</code> <code>Environment=PATH=/path/to/node/bin:/usr/local/bin:/usr/bin:/bin</code></td></tr>
+        <tr><td>Card starts with “AI ANALYSIS UNAVAILABLE”</td><td>The model call failed; the reason is shown on the card</td><td>Fix the key, model name or provider in <code>sudo sre-agent setup --only llm</code>; <code>sudo sre-agent doctor</code> repeats the live check</td></tr>
+        <tr><td>Upgrade: no cards for 404s or bot probes any more</td><td>They are now LOW (daily digest)</td><td>Expected; <code>SEVERITY_DEFAULTS=false</code> turns it off</td></tr>
+        <tr><td>Upgrade: old log lines are not reported</td><td>A log is read from its end the first time</td><td><code>MONITOR_REPLAY_BACKLOG=true</code> for one start</td></tr>
         <tr><td>Approve / Reject links do not open</td><td>Public URL is <code>localhost</code></td><td>Put nginx/Caddy with HTTPS in front and run <code>sudo sre-agent setup --only web</code></td></tr>
       </table></div>
       <div class="note"><b>Getting help</b>Send the output of <code>sudo sre-agent doctor</code> and the last 100 lines of <code>/var/log/sre-agent/sre.log</code>. The agent masks tokens in its log, but glance through it before sending.</div>
