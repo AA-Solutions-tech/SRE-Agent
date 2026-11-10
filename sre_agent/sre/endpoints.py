@@ -62,16 +62,49 @@ def signal_inject(event: dict, supervise: bool = Query(False)):
 
 
 ISSUE_FIELDS = ("service", "error", "severity", "state", "count", "first_seen", "last_seen", "state_since",
-                "regressions", "revisions", "investigation_id", "fingerprint", "branch", "commit", "pr_url")
+                "regressions", "revisions", "investigation_id", "fingerprint", "branch", "commit", "pr_url",
+                "last_delivery")
 
 
 def _issue_view(item: dict) -> dict:
     return {"id": item["id"], **{k: item["data"].get(k) for k in ISSUE_FIELDS}}
 
 
+@router.get("/stats")
+def stats(days: int = Query(7, ge=1, le=90)):
+    """What a dashboard needs to tell "no data" from "on track". Decisions, analysis quality and delivery over the
+    last `days`. With zero decisions `decision_metrics` says "no data": nobody has answered a card yet."""
+    from datetime import datetime, timedelta, timezone
+
+    from sre_agent.core.db import count_items
+
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    investigations = list_items(kind="investigation", since=since, limit=5000)
+    decided = [i for i in investigations if i["data"].get("decided_from") or i["data"].get("decided_by")]
+    via_slack = [i for i in decided if (i["data"].get("decided_by") or {}).get("via") == "slack"]
+    fallback = [i for i in investigations if i["data"].get("ai_error")]
+    issues_seen = list_items(kind="issue", since=since, limit=5000)
+    delivered = [i for i in issues_seen if any(d.get("ok") for d in i["data"].get("last_delivery") or [])]
+    failed = [i for i in issues_seen if i["data"].get("last_delivery")
+              and not any(d.get("ok") is not False for d in i["data"]["last_delivery"])]
+    return {
+        "days": days,
+        "signals": count_items("signal", since=since),
+        "issues": len(issues_seen),
+        "investigations": len(investigations),
+        "ai_analysed": len(investigations) - len(fallback),
+        "ai_template_fallback": len(fallback),
+        "decisions": len(decided),
+        "decisions_via_slack": len(via_slack),
+        "cards_delivered": len(delivered),
+        "cards_delivery_failed": len(failed),
+        "decision_metrics": "available" if decided else "no data",
+    }
+
+
 @router.get("/issues")
 def issues_list(state: str | None = None, service: str | None = None, limit: int = Query(20, ge=1, le=100)):
-    """Read-only list of tracked issues, newest first. ?state=open|fix_pending|developer_fix|rejected|fixed"""
+    """Read-only list of tracked issues, newest first. ?state=open|fix_pending|developer_fix|ignored|rejected|fixed"""
     items = list_items(kind="issue")
     if state:
         items = [i for i in items if i["data"].get("state") == state]

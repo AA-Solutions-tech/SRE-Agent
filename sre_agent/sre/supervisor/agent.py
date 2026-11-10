@@ -152,7 +152,12 @@ def notify_step(state: State) -> State:
         f"({signal.get('service', '?')} {signal.get('severity', '?')} "
         f"{signal.get('error', '?')}) -> {state['delegation']}"
     )
-    notify(f"sre supervisor: {signal.get('service', '?')} {signal.get('severity', '?')}", summary)
+    router = state["router_used"]
+    router = "rules router (clef unavailable)" if router.startswith("rules (") else f"{router} router"
+    target = (state.get("route") or {}).get("agent") or "no agent"
+    outcome = state["delegation"].split(": ", 1)[-1][:200]
+    notify(f"sre supervisor: {signal.get('service', '?')} {signal.get('severity', '?')}",
+           f"Signal `{state.get('signal_id', '?')}` routed to *{target}* by the {router}.\n{outcome}")
     step(logger, "supervisor.04.notify", "supervisor summary sent", summary=summary[:300])
     return {"summary": summary}
 

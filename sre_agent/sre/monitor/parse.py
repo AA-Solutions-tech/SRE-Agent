@@ -15,6 +15,8 @@ import os
 import re
 from datetime import datetime, timezone
 
+from sre_agent.core.redact import redact
+
 LINE_RE = re.compile(
     r"^\s*\[(?P<ts>[^\]]+)\]\s+"
     r"\[(?P<level>[^\]]+)\]\s+"
@@ -111,17 +113,20 @@ def parse_line(line: str) -> dict:
     }
 
 
-def classify(lines: list[str]) -> dict:
+def classify(lines: list[str], service: str | None = None) -> dict:
     """Split lines into signal (page), audit (quiet), quarantine (unparseable).
 
     Returns {'signal': [...], 'audit': [...], 'quarantine': [...]} where each
     entry is a parse_line() dict. Blank lines are ignored entirely.
+    `service` (from a "path@service" source) names every parsed event, whatever the log line says.
     """
     signal, audit, quarantine = [], [], []
     for line in lines:
         if not line.strip():
             continue
         ev = parse_line(line)
+        if service and ev["parsed"]:
+            ev["service"] = service
         if not ev["parsed"] or ev["level"] not in (*LEVEL_SEVERITY, *AUDIT_LEVELS):
             quarantine.append(ev)
         elif ev["level"] in LEVEL_SEVERITY:
@@ -159,14 +164,15 @@ def build_signal(signal_lines: list[dict], quarantine: list[dict], source: str) 
         (e["ts"] for e in reversed(signal_lines) if e["ts"]),
         datetime.now(timezone.utc).isoformat(),
     )
+    # Secrets are masked BEFORE the record is stored: the database, the API and every prompt then never hold them.
     record = {
         "service": first_error["service"] or "unknown",
         "severity": severity,
-        "error": _error_name(first_error["message"]),
-        "evidence": [e["raw"] for e in signal_lines],
+        "error": redact(_error_name(first_error["message"])),
+        "evidence": [redact(e["raw"]) for e in signal_lines],
         "ts": ts,
         "source": source,
     }
     if quarantine:
-        record["quarantine"] = [e["raw"] for e in quarantine]
+        record["quarantine"] = [redact(e["raw"]) for e in quarantine]
     return record

@@ -82,7 +82,7 @@ def test_second_identical_run_is_quiet(tmp_path, notified):
     monitor_agent.run(source=p, mode="once")  # fires
     assert len(list_items(kind="signal")) == 1
     out = monitor_agent.run(source=p, mode="once")  # nothing new
-    assert "no new signals" in out
+    assert out.startswith("no new")  # "no new lines": nothing was read at all
     assert len(list_items(kind="signal")) == 1
 
 

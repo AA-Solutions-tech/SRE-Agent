@@ -9,7 +9,8 @@ python run.py monitor --mode once --source sre_agent/sre/monitor/fixtures/mixed.
 python run.py monitor --mode watch --source data/app.log
 ```
 
-`--source`: file path | `local_file` (env `MONITOR_LOG_PATH`) | `ssh`
+`--source`: file path | `local_file` (env `MONITOR_LOG_PATH`) | `ssh` | `docker:<container>` | `journald:<unit>`
+(`MONITOR_LOG_PATH` may list several, comma separated: one watcher each)
 (remote log via `core.ssh_logs`). `--mode`: `once` (tests/cron) | `watch`
 (poll every `POLL_SECONDS`, stop with Ctrl+C).
 
@@ -17,6 +18,10 @@ python run.py monitor --mode watch --source data/app.log
 
 - ERROR/WARN → signal (one stored item per run, all lines as evidence).
 - INFO/DEBUG → audit only, never a signal, never a notification.
+- Known operational errors (missing env key, bad credentials, rate limit, bad recipient, server, external) are
+  tagged with a `category` here (`sre/classify.py`); the incident agent then sends an "action needed" card instead
+  of a code-fix approval. Rate-limit/external errors are only a card once they persist (`WATCH_THRESHOLD`).
+- Every polled line is also shown to `sre/schedules.py`, which alerts when a configured cron job did not run.
 - Unparsable lines → quarantined (attached as context, never paging alone).
 - The monitor only notifies (`core.notify`, console fallback until
   `SLACK_WEBHOOK_URL` is set). It never requests approval or changes anything.

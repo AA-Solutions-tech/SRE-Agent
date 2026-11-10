@@ -10,6 +10,7 @@ import socket
 import sqlite3
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 from sre_agent import __version__
 from sre_agent.core.config import settings
@@ -101,6 +102,55 @@ def check_notify():
     return WARN, "notifications", "no Slack/GChat webhook or SMTP set: nobody will see incidents"
 
 
+def _loopback(url: str) -> bool:
+    host = urlparse(url).hostname or ""
+    return host in ("localhost", "0.0.0.0", "::1") or host.startswith("127.")
+
+
+def check_app_base_url():
+    """Approve / Reject / Ignore links open APP_BASE_URL. A loopback address means every button opens the reader's
+    own computer, so no decision can ever be recorded (the pilot recorded none)."""
+    from sre_agent.sre import slack_app
+
+    url = settings.app_base_url
+    if not _loopback(url):
+        return (OK, "APP_BASE_URL", url) if url.startswith("https://") else \
+            (WARN, "APP_BASE_URL", f"{url} is plain http: put the service behind HTTPS before anyone clicks links")
+    if slack_app.configured() and "slack" in settings.notify_channels and \
+            not ({"email", "gchat"} & set(settings.notify_channels)):
+        return OK, "APP_BASE_URL", f"{url} is loopback, but Slack buttons decide inside Slack (interactivity is configured)"
+    return (WARN, "APP_BASE_URL", f"{url} is a loopback address: buttons opened from Slack or email will not work. "
+            "Set the public HTTPS URL, or configure the Slack app (SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET and "
+            "its Interactivity URL) so Approve/Reject/Ignore work inside Slack")
+
+
+def check_log_sources():
+    """Can the service read every log file it is meant to watch? Names the exact fix when it cannot (the packaged
+    unit hides /home with ProtectHome=true, and then the agent starts but watches nothing)."""
+    from sre_agent.sre.monitor.sources import expand_path, is_file_source, parse_sources, readable_problem
+
+    if os.getenv("MONITOR_SOURCE", "local_file").strip() == "ssh" and not os.getenv("MONITOR_LOG_PATH", "").strip():
+        return OK, "log sources", "remote log over SSH"
+    entries = parse_sources(os.getenv("MONITOR_LOG_PATH", ""))
+    if not entries:
+        return WARN, "log sources", "MONITOR_LOG_PATH is empty: nothing is being watched"
+    files = [src for src, _ in entries if is_file_source(src)]
+    problems = [p for p in (readable_problem(expand_path(src)) for src in files) if p]
+    if problems:
+        return WARN, "log sources", " | ".join(problems)
+    return OK, "log sources", f"{len(entries)} source(s), {len(files)} file(s) readable"
+
+
+def check_llm_live():
+    """One tiny real model call (full doctor only): a wrong key, model name or rejected parameter shows up here."""
+    from sre_agent.sre import llm_check
+
+    if not llm_check.configured():
+        return OK, "LLM call", "skipped (no key configured)"
+    ok, why = llm_check.selftest()
+    return (OK, "LLM call", f"{settings.llm_provider} answered") if ok else (FAIL, "LLM call", why)
+
+
 def check_ssh():
     if os.getenv("MONITOR_SOURCE", "local_file").strip() != "ssh":
         return OK, "SSH log source", "not used"
@@ -130,10 +180,12 @@ def run_checks(quick: bool = False) -> list[tuple[str, str, str]]:
         check_api_key,
         lambda: check_writable("SRE_HOME", settings.data_dir),
         check_db,
+        check_app_base_url,
+        check_log_sources,
     ]
     if not quick:
         checks += [check_bind, check_git, lambda: check_command("TEST_CMD"), lambda: check_command("LINT_CMD"),
-                   check_llm_key, check_notify, check_ssh, check_ssh_reachable]
+                   check_llm_key, check_llm_live, check_notify, check_ssh, check_ssh_reachable]
     results = []
     for check in checks:
         try:

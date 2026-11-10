@@ -15,8 +15,9 @@ def test_token_is_deterministic_and_secret_dependent(cfg):
 def test_approval_url_shape(cfg):
     cfg(app_base_url="http://x:8000", approval_secret="s")
     u = urlparse(n.approval_url("id1", "act", "approve"))
+    q = parse_qs(u.query)
     assert u.path == "/approve/id1/act/approve"
-    assert parse_qs(u.query)["token"] == [n.approval_token("id1", "act")]
+    assert q["token"] == [n.approval_token("id1", "act", "approve", int(q["exp"][0]))]
 
 
 def test_slack_blocks_buttons_and_truncation():

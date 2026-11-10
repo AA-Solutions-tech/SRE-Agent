@@ -18,7 +18,8 @@ import re
 from pathlib import Path
 
 from sre_agent.core.config import settings
-from sre_agent.core.git_tools import BLOCKED_PARTS, _git
+from sre_agent.core.redact import redact
+from sre_agent.core.git_tools import BLOCKED_PARTS, _git, is_secret_path
 from sre_agent.core.llm import get_llm, text_of
 from sre_agent.core.sre_log import get_logger, step
 from sre_agent.sre.monitor.parse import parse_line
@@ -31,7 +32,8 @@ SNIPPET_RADIUS = 30          # lines either side of the first hit
 SNIPPET_MAX_CHARS = 5000
 MIN_TERM_LEN = 8
 GENERIC_TERMS = {"error", "failed", "object", "undefined", "exception", "[object object]"}
-CATEGORIES = ("code_bug", "credentials", "config", "dependency", "data", "capacity", "unknown")
+CATEGORIES = ("code_bug", "credentials", "config", "dependency", "data", "capacity", "rate_limit", "server",
+              "external", "unknown")
 RISKS = ("low", "medium", "high")
 STACK_RE = re.compile(r"([\w./\\-]+\.(?:js|mjs|cjs|ts|tsx|jsx|py)):(\d+)")
 CODE_WORD_RE = re.compile(r"\b(?:[a-z]+[A-Z]\w{3,}|[a-z]{3,}_[a-z_]{3,})\b")
@@ -137,7 +139,7 @@ def _grep(repo: Path, term: str) -> list[tuple[str, int]]:
         if len(parts) < 3 or not parts[1].isdigit():
             continue
         path = parts[0]
-        if (BLOCKED_PARTS & set(Path(path).parts) or path.lower().endswith(SKIP_EXT)
+        if (BLOCKED_PARTS & set(Path(path).parts) or is_secret_path(path) or path.lower().endswith(SKIP_EXT)
                 or any(s in path.lower() for s in SKIP_PATH_PARTS)):
             continue
         hits.append((path, int(parts[1])))
@@ -207,7 +209,7 @@ def _clean(raw: dict, known: dict[str, int], signal: dict, repo: Path | None = N
         conf = 0.0
     category = raw.get("category") if raw.get("category") in CATEGORIES else "unknown"
     fix_type = "code" if raw.get("fix_type") == "code" else "ops"
-    if category == "credentials":  # an expired/revoked token cannot be fixed by editing code
+    if category in ("credentials", "server", "external"):  # editing code cannot fix these
         fix_type = "ops"
     conf = inv.calibrate(conf, fix_type, verified, failed, files) if repo else (
         min(conf, 0.3) if fix_type == "code" and not files else conf)
@@ -250,10 +252,10 @@ def _investigate(signal: dict, related: list[dict], repo: Path, candidates: list
         f"PATTERN: {inv.pattern_text(signal, related)}",
         "",
         "LOG EVIDENCE:",
-        nl.join((signal.get("evidence") or [])[:10]) or "(none)",
+        redact(nl.join((signal.get("evidence") or [])[:10])) or "(none)",
         "",
         "STACK TRACE / CONTEXT LINES:",
-        nl.join((signal.get("quarantine") or [])[:20]) or "(none)",
+        redact(nl.join((signal.get("quarantine") or [])[:20])) or "(none)",
         "",
         revision_text(revision),
         "STARTING POINTS FROM A KEYWORD SEARCH (verify them, do not trust them):",
@@ -303,8 +305,8 @@ def inspect(signal: dict, related: list[dict] | None = None, revision: dict | No
         reply = text_of(get_llm(temperature=0.0).invoke(PROMPT.format(
             categories=list(CATEGORIES), risks=list(RISKS), service=signal.get("service", "?"),
             frequency=frequency_text(signal, related),
-            evidence="\n".join((signal.get("evidence") or [])[:10]) or "(none)",
-            context="\n".join((signal.get("quarantine") or [])[:20]) or "(none)",
+            evidence=redact("\n".join((signal.get("evidence") or [])[:10])) or "(none)",
+            context=redact("\n".join((signal.get("quarantine") or [])[:20])) or "(none)",
             snippets=snippets, revision=revision_text(revision))))
         result = _clean(_parse_json(reply), {c["path"]: c["line"] for c in candidates}, signal, repo)
         if not result["root_cause"]:
@@ -322,6 +324,7 @@ def inspect(signal: dict, related: list[dict] | None = None, revision: dict | No
             return {}
         top = candidates[0]
         return {
+            "ai_error": f"{type(e).__name__}: {e}"[:200],
             "summary": f"{signal.get('error', 'error')} logged on {signal.get('service', '?')}",
             "impact": "unknown (no LLM analysis available)",
             "category": "unknown",

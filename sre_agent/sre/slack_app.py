@@ -19,6 +19,10 @@ import httpx
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
+from datetime import datetime, timezone
+
+from sre_agent.core import approvals
+from sre_agent.core.db import update_item
 from sre_agent.core.sre_log import get_logger, step
 from sre_agent.sre import revision
 
@@ -28,6 +32,7 @@ SLACK_API = "https://slack.com/api"
 MAX_AGE_SECONDS = 300
 CALLBACK = "request_changes_modal"
 ACTION = "request_changes"
+DECIDE = "decide:"  # action_id prefix of the Approve / Reject / Ignore ... buttons
 FIELDS = (  # (block id, label, multiline hint)
     ("note", "What should change?", False),
     ("deny_paths", "Files or folders NOT to touch (one per line)", True),
@@ -121,7 +126,50 @@ def values_of(view: dict) -> dict:
     return out
 
 
-def on_block_action(payload: dict) -> None:
+def _replace(payload: dict, note: str) -> None:
+    """Swap the card's buttons for who decided what, so a decision is visible to everyone and cannot be repeated."""
+    url = payload.get("response_url")
+    if not url:
+        return
+    blocks = [b for b in (payload.get("message") or {}).get("blocks", []) if b.get("type") != "actions"]
+    blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": note[:2900]}]})
+    try:
+        httpx.post(url, json={"replace_original": True, "text": note[:300], "blocks": blocks}, timeout=2.5)
+    except httpx.HTTPError:
+        pass
+
+
+def on_decision(payload: dict, action: dict) -> None:
+    """A decision button was pressed in Slack: same signed token and single-use rules as the web link, plus who."""
+    user = payload.get("user") or {}
+    uid, name = user.get("id", ""), user.get("username") or user.get("name") or ""
+    if not allowed_user(uid):
+        step(logger, "slack.03.decide", "user not allowed to decide", level="warning", user=uid)
+        return _tell(payload, "You are not on the list of people who may decide on these cards.")
+    try:
+        head, item_id, stage, exp, token = (action.get("value") or "").split("|", 4)
+        kind = head[len(DECIDE):]
+        msg = approvals.handle_decision(item_id, stage, kind, token, exp)
+    except PermissionError as e:
+        return _tell(payload, f"This button is no longer valid ({e}). Use the newest message for this error.")
+    except LookupError:
+        return _tell(payload, "That item no longer exists.")
+    except ValueError as e:
+        return _tell(payload, str(e))
+    try:
+        update_item(item_id, decided_by={"slack_user": uid, "name": name, "via": "slack",
+                                         "at": datetime.now(timezone.utc).isoformat()})
+    except KeyError:
+        pass
+    step(logger, "slack.03.decide", "decision from Slack", user=uid, item_id=item_id, action=kind)
+    _replace(payload, f"*{kind.replace('_', ' ').title()}* by <@{uid}>: {msg}")
+
+
+def on_block_action(payload: dict, background: BackgroundTasks | None = None) -> None:
+    decide = next((a for a in payload.get("actions") or [] if str(a.get("action_id", "")).startswith(DECIDE)), None)
+    if decide:  # may run git and open a pull request: answer Slack first, finish afterwards
+        (background.add_task(on_decision, payload, decide) if background else on_decision(payload, decide))
+        return
     user = (payload.get("user") or {}).get("id", "")
     action = next((a for a in payload.get("actions") or [] if a.get("action_id") == ACTION), None)
     if not action:
@@ -174,7 +222,7 @@ async def interactions(request: Request, background: BackgroundTasks):
         raise HTTPException(400, "no payload")
     kind = payload.get("type")
     if kind == "block_actions":
-        on_block_action(payload)
+        on_block_action(payload, background)
         return Response(status_code=200)
     if kind == "view_submission":
         return JSONResponse(on_view_submission(payload, background))

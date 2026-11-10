@@ -39,5 +39,28 @@ def absolute_path(value: str) -> str:
     return "" if value.startswith("/") or re.match(r"^[A-Za-z]:[\\/]", value) else "must be an absolute path"
 
 
+def log_sources(value: str) -> str:
+    """One or more log sources, comma separated. Each is an absolute file path, docker:<container> or
+    journald:<unit>, optionally followed by @service-name."""
+    from sre_agent.sre.monitor.sources import split_source
+
+    parts = [p.strip() for p in value.split(",") if p.strip()]
+    if not parts:
+        return "enter at least one log file"
+    for part in parts:
+        source, _ = split_source(part)
+        if source.startswith(("docker:", "journald:")):
+            if not re.fullmatch(r"(?:docker|journald):[A-Za-z0-9][\w.@:-]*", source):
+                return f"{source!r}: use docker:<container> or journald:<unit>"
+        elif absolute_path(source):
+            return f"{source!r}: {absolute_path(source)}"
+    return ""
+
+
+def is_loopback_url(value: str) -> bool:
+    host = urlparse(value).hostname or ""
+    return host in ("localhost", "0.0.0.0", "::1") or host.startswith("127.")
+
+
 def no_spaces(value: str) -> str:
     return "" if not re.search(r"\s", value) else "must not contain spaces"

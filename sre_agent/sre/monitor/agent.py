@@ -10,10 +10,8 @@ Pattern: linear LangGraph pipeline  collect -> classify -> emit.
     python run.py monitor --mode watch
     python run.py monitor --mode once --source ssh
 """
-import glob
 import os
 import time
-from datetime import datetime
 from pathlib import Path
 from typing import TypedDict
 
@@ -21,7 +19,9 @@ from langgraph.graph import END, START, StateGraph
 
 from sre_agent.core.config import settings
 from sre_agent.core.db import create_item, list_items, update_item
-from sre_agent.sre import issues
+from sre_agent.core import paging
+from sre_agent.sre import anomaly, classify as error_kinds, health, ignorelist, issues, schedules
+from sre_agent.sre import severity as severity_rules
 from sre_agent.core.notify import notify
 from sre_agent.core.sre_log import bind_trace, clear_trace, get_logger, step
 
@@ -30,6 +30,7 @@ logger = get_logger("monitor")
 from .local_file import LocalFileReader
 from .log_source import get_source
 from .parse import build_signal, classify
+from .sources import expand_path, split_source  # expand_path lives in .sources: the doctor uses it too
 
 CURSOR_KIND = "monitor_cursor"  # one record per watched file: {path, offset}
 NL = chr(10)
@@ -61,10 +62,12 @@ class State(TypedDict, total=False):
     signal_id: str         # first stored signal item id (when a signal fires)
     signal_ids: list       # every signal filed in this pass (one per distinct error)
     summary: str           # human-readable outcome for run()/CLI
+    backlog: bool          # this pass replays old log history (MONITOR_REPLAY_BACKLOG): mark its signals
+    ignored: int           # lines dropped by the ignore list in this pass
 
 
-def build(reader=None):
-    """Compile the monitor graph. reader is the live LogSource (closed over).
+def build(reader=None, service: str | None = None):
+    """Compile the monitor graph. reader is the live LogSource (closed over); `service` names its signals.
 
     Passing text directly in state skips the live read — used by tests.
     """
@@ -80,23 +83,28 @@ def build(reader=None):
             step(logger, "monitor.04.collect", "read failed", level="error", source=src,
                  error=f"{type(e).__name__}: {e}")
             raise
-        step(logger, "monitor.04.collect", "read new log text", source=src,
-             chars=len(text), offset=getattr(reader, "offset", None))
+        step(logger, "monitor.04.collect", "read new log text", source=src, level="info" if text else "debug",
+             chars=len(text), offset=getattr(reader, "offset", None))  # an idle poll is DEBUG: it runs every 5 s
         return {"text": text}
 
     def classify_node(state: State) -> State:
         text = (state.get("text") or "").strip()
+        schedules.observe(text.splitlines())  # proves scheduled jobs ran (and that this monitor is alive)
+        health.poll(bool(text))  # liveness + log-silence tracking
         if not text:
-            step(logger, "monitor.05.classify", "no new lines to classify")
+            step(logger, "monitor.05.classify", "no new lines to classify", level="debug")
             return {
                 "signal_lines": [],
                 "audit_lines": [],
                 "quarantine": [],
+                "ignored": 0,
                 "summary": "no new lines",
             }
-        parts = classify(text.splitlines())
+        parts = classify(text.splitlines(), service)
+        parts["signal"], dropped = ignorelist.split(parts["signal"])  # known noise: counted, never a signal
+        _safely(ignorelist.record, dropped)
         step(logger, "monitor.05.classify", "classified lines",
-             lines=len(text.splitlines()), signal=len(parts["signal"]),
+             lines=len(text.splitlines()), signal=len(parts["signal"]), ignored=len(dropped),
              audit=len(parts["audit"]), quarantine=len(parts["quarantine"]))
         for q in parts["quarantine"]:
             step(logger, "monitor.05.classify", "unparsable line quarantined", level="warning",
@@ -105,6 +113,7 @@ def build(reader=None):
             "signal_lines": parts["signal"],
             "audit_lines": parts["audit"],
             "quarantine": parts["quarantine"],
+            "ignored": len(dropped),
         }
 
     def emit(state: State) -> State:
@@ -116,42 +125,66 @@ def build(reader=None):
             step(logger, "monitor.06.error_found", "ERROR/WARN line found", level="warning",
                  level_name=ev["level"], service=ev["service"], ts=ev["ts"],
                  error_text=ev["message"][:200], source=state.get("source_name", ""))
+        ignored_note = f", {state['ignored']} ignored" if state.get("ignored") else ""
         if not signal_lines:
-            step(logger, "monitor.07.emit", "no signal to file", audited=audited)
+            step(logger, "monitor.07.emit", "no signal to file", audited=audited, level="debug")
             logger.debug("signal.none", extra={"source": state.get("source_name", ""), "audited": audited})
-            return {"summary": f"no new signals (audited {audited} lines)"}
+            if not audited and not state.get("ignored"):
+                return {"summary": "no new lines"}  # an idle poll: the watch loop logs it at DEBUG, not every 5 s
+            return {"summary": f"no new signals (audited {audited} lines{ignored_note})"}
+        _safely(anomaly.record_errors, len(signal_lines))  # spike detection across all errors
         groups: dict[str, list] = {}
         for ev in signal_lines:  # one signal per distinct error, never one blob per batch
             groups.setdefault(issues.fingerprint(ev["service"] or "", ev["message"]), []).append(ev)
-        filed, counted = [], 0
+        filed, counted, held_n, new_n = [], 0, 0, 0
         for fp, lines in groups.items():
             signal = build_signal(lines, state.get("quarantine") or [], state.get("source_name", ""))
             signal["fingerprint"] = fp
-            item_id = create_item("signal", signal)
+            if state.get("backlog"):
+                signal["backlog"] = True  # old history replayed on purpose, not something that just happened
+            signal.update(error_kinds.tag(signal))  # category + details for operational errors (config, rate limit, ...)
+            signal.update(severity_rules.apply(signal))  # CRITICAL for configured services / patterns
+            held = severity_rules.should_hold(signal)  # quiet hours: store and count, hold the card
+            if held:
+                signal["held"] = True
+            item_id = create_item("signal", signal, status="held" if held else "new")
             bind_trace(item_id)  # one error = one trace across every agent
             issue_id, action = issues.record_occurrence(signal, item_id)
-            update_item(item_id, issue_id=issue_id)
+            update_item(item_id, issue_id=issue_id, **({"status": "counted"} if action == "count" else {}))
             if action == "count":  # a known issue: counted on the issue, no new card, no handoff
                 counted += 1
                 step(logger, "monitor.07.emit", "known issue, occurrence counted only", signal_id=item_id,
                      issue_id=issue_id, error=signal["error"])
                 continue
-            title = f"signal detected: {signal['service']} {signal['severity']}"
-            body = NL.join([f"error: {signal['error']}", f"evidence lines: {len(signal['evidence'])}",
-                            f"ts: {signal['ts']}", f"signal id: {item_id}"])
+            if _is_new_issue(issue_id):
+                new_n += 1
+            if held:
+                held_n += 1
+                step(logger, "monitor.07.emit", "quiet hours: card held until they end", signal_id=item_id,
+                     issue_id=issue_id, severity=signal["severity"], error=signal["error"])
+                continue
+            title = f"signal detected: {signal['service']} {signal['severity']}" + (" (backlog)" if signal.get("backlog") else "")
+            body = NL.join(["*ERROR*", signal["error"], "", "*DETAILS*",
+                            f"{len(signal['evidence'])} evidence line(s) · {signal['ts']} · signal `{item_id}`"])
             step(logger, "monitor.07.emit", "signal stored in DB", signal_id=item_id, issue_id=issue_id,
                  service=signal["service"], severity=signal["severity"], error=signal["error"],
-                 evidence=len(signal["evidence"]))
-            notify(title, body)
+                 evidence=len(signal["evidence"]), category=signal.get("category"))
+            deliveries = notify(title, body)
+            if isinstance(deliveries, list):
+                update_item(item_id, delivery=deliveries)  # per channel: ok / HTTP status / error
+            if signal["severity"] == "CRITICAL":
+                paging.page(title, body, "CRITICAL")
             step(logger, "monitor.08.notify", "signal notification sent", signal_id=item_id)
             logger.info("signal.filed", extra={"signal_id": item_id, "service": signal["service"],
                                                "severity": signal["severity"], "error": signal["error"],
                                                "evidence": len(signal["evidence"]),
                                                "source": state.get("source_name", "")})
             filed.append((item_id, signal))
+        _safely(anomaly.record_new_issues, new_n)  # several new kinds at once = something changed
         if not filed:
-            return {"summary": f"no new signals ({counted} known issue occurrence(s) counted, "
-                               f"audited {audited} lines)"}
+            held_note = f", {held_n} held for quiet hours" if held_n else ""
+            return {"summary": f"no new signals ({counted} known issue occurrence(s) counted{held_note}, "
+                               f"audited {audited} lines{ignored_note})"}
         first_id, first = filed[0]
         more = f" (+{len(filed) - 1} more: {', '.join(i for i, _ in filed[1:])})" if len(filed) > 1 else ""
         return {
@@ -174,27 +207,31 @@ def build(reader=None):
     return g.compile()
 
 
+def _safely(fn, *args) -> None:
+    """Volume/anomaly bookkeeping must never break the monitor."""
+    try:
+        fn(*args)
+    except Exception as e:  # noqa: BLE001
+        step(logger, "monitor.07.emit", "bookkeeping failed", level="error", fn=getattr(fn, "__name__", "?"),
+             error=f"{type(e).__name__}: {e}"[:200])
+
+
+def _is_new_issue(issue_id: str) -> bool:
+    issue = issues.get_issue(issue_id)
+    return bool(issue and issue["data"].get("count") == 1)
+
+
 def has_dynamic_parts(template: str) -> bool:
     """True when the path changes by itself: a {date} placeholder or a wildcard."""
     return "{date}" in template or any(c in template for c in "*?[")
 
 
-def expand_path(template: str, now: datetime | None = None) -> str:
-    """Resolve a rotating log path: {date} -> YYYY-MM-DD, and a wildcard (errors-*.jsonl) -> the newest match.
+def _open_source(source: str, service: str | None = None, start_at_end: bool = False):
+    """(reader, label, graph, fresh): resolves the source, loads the saved cursor, compiles the pipeline.
 
-    Compressed (.gz) files are skipped and symlinks are resolved, so errors-current.jsonl and the dated file
-    it points to count as one file. With no match the pattern is returned, so the "file not found" error names it.
-    """
-    path = template.replace("{date}", (now or datetime.now()).strftime("%Y-%m-%d"))
-    if any(c in path for c in "*?["):
-        found = [m for m in glob.glob(path) if os.path.isfile(m) and not m.endswith(".gz")]
-        if found:
-            return os.path.realpath(max(found, key=os.path.getmtime))
-    return path
-
-
-def _open_source(source: str):
-    """(reader, label, graph): resolves the source, loads the saved cursor, compiles the pipeline."""
+    `fresh` is True when this log was never watched before. With `start_at_end` such a log is read from its END:
+    a live tail reports what happens from now on, not years of history as hundreds of incidents."""
+    fresh = False
     reader = get_source(expand_path(source))
     label = expand_path(source).strip() or "default"
     step(logger, "monitor.02.source", "log source resolved", reader=type(reader).__name__)
@@ -206,11 +243,17 @@ def _open_source(source: str):
              level="info" if exists else "error", path=label, exists=exists,
              size=reader.path.stat().st_size if exists else None)
         saved = _load_offset(label)
+        fresh = saved is None
         if saved is not None:
             reader.offset = saved
+        elif start_at_end and exists:
+            reader.offset = reader.path.stat().st_size
+            _save_offset(label, reader.offset)
+            step(logger, "monitor.03.cursor", "new log: starting at its end, old errors are not replayed",
+                 path=label, offset=reader.offset)
         step(logger, "monitor.03.cursor", "cursor loaded", path=label,
              saved_offset=saved, resuming=saved is not None)
-    return reader, label, build(reader)
+    return reader, label, build(reader, service), fresh
 
 
 def _save(reader, label: str) -> None:
@@ -232,7 +275,11 @@ def run(source: str = "", mode: str = "once", poll_seconds: int = 0, on_signal=N
             (used by sre.auto to hand off to the supervisor).
     """
     step(logger, "monitor.01.start", "monitor run started", source=(source or "").strip() or "default", mode=mode)
-    reader, label, graph = _open_source(source)
+    full_name = source  # watcher health is keyed by the name exactly as configured
+    source, service = split_source(source)  # "path@service": every incident from this source carries that service
+    replay = os.getenv("MONITOR_REPLAY_BACKLOG", "false").strip().lower() == "true"
+    reader, label, graph, fresh = _open_source(source, service, start_at_end=(mode == "watch" and not replay))
+    backlog = bool(fresh and replay and mode == "watch")  # the first pass replays history: say so on its signals
     wait = poll_seconds or settings.poll_seconds
     try:
         if mode == "watch":
@@ -245,8 +292,9 @@ def run(source: str = "", mode: str = "once", poll_seconds: int = 0, on_signal=N
                         step(logger, "monitor.02.source", "log file rolled over, following the new file",
                              old=label, new=current)
                         reader.close()
-                        reader, label, graph = _open_source(source)
-                    out = graph.invoke({"text": None, "source_name": label})
+                        reader, label, graph, _ = _open_source(source, service)  # a new file is read from its start
+                    out = graph.invoke({"text": None, "source_name": label, "backlog": backlog})
+                    backlog = False
                     checks += 1
                     _save(reader, label)  # persist before handing off
                     for signal_id in out.get("signal_ids") or []:
@@ -255,11 +303,13 @@ def run(source: str = "", mode: str = "once", poll_seconds: int = 0, on_signal=N
                             on_signal(signal_id)
                     clear_trace()  # the hand-off agents ran in this thread: do not tag the heartbeat with their trace
                     step(logger, "monitor.09.watch", "poll complete", check=checks, signals=fired,
+                         level="debug" if out.get("summary") == "no new lines" else "info",
                          result=out.get("summary", ""), next_poll_s=wait)
+                    _safely(health.report, f"watcher:{full_name}", True, f"Log watcher recovered: {label}")
                     time.sleep(wait)
             except KeyboardInterrupt:
                 return f"watching {label}: {checks} checks, {fired} signals (stopped)"
-        out = graph.invoke({"text": None, "source_name": label})
+        out = graph.invoke({"text": None, "source_name": label, "backlog": backlog})
         _save(reader, label)
         return out.get("summary", "done")
     finally:

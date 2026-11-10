@@ -22,6 +22,7 @@ import os
 import httpx
 from httpx import HTTPStatusError  # bound directly: survives tests that mock clef.httpx
 
+from sre_agent.core.redact import redact
 from sre_agent.core.sre_log import get_logger
 from .router import Route, RouterError
 
@@ -62,7 +63,7 @@ def build_prompt(signal: dict, available: list[str]) -> str:
         'no prose: {"agent": <name or null>, "confidence": <0-1>, "reason": <short>}.\n'
         f"Available agents: {json.dumps(capable)}\n"
         "Reply agent=null when none of them can handle the signal.\n"
-        f"Signal: {json.dumps({k: signal.get(k) for k in ('service', 'severity', 'error', 'evidence', 'ts')})}"
+        f"Signal: {redact(json.dumps({k: signal.get(k) for k in ('service', 'severity', 'error', 'evidence', 'ts')}))}"
     )
 
 

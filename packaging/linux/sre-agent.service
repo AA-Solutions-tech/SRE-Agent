@@ -23,6 +23,9 @@ UMask=0027
 
 # Hardening. If TEST_CMD needs to write elsewhere or a toolchain on PATH, add a drop-in:
 #   sudo systemctl edit sre-agent   ->   [Service] ReadWritePaths=/path  Environment=PATH=/opt/node/bin:/usr/bin
+# ProtectHome=true hides /home. To watch an app's log under /home (`sre-agent doctor` prints these for you):
+#   sudo systemctl edit sre-agent   ->   [Service] ProtectHome=read-only
+#   sudo setfacl -m u:sre-agent:x /home/<user>   and   sudo setfacl -R -m u:sre-agent:rX /home/<user>/<log folder>
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict

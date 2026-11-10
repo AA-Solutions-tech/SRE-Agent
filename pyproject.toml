@@ -12,6 +12,7 @@ license = { text = "Proprietary" }
 authors = [{ name = "AA Solutions" }]
 # Lower bounds only; exact, hash-pinned versions for release builds live in packaging/common/lock/.
 dependencies = [
+    "tzdata; sys_platform == 'win32'",
     "langchain>=0.3",
     "langchain-core>=0.3",
     "langgraph>=0.2",

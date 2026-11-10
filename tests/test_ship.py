@@ -70,10 +70,10 @@ def test_nothing_is_offered_for_an_unfinished_fix(fix, monkeypatch):
 def test_approve_in_dry_run_commits_but_does_not_push(fix):
     msg = _decide(ship.offer(fix["result"], fix["inv"]), "approve")
     assert "committed" in msg and "DRY_RUN_PUSH=true" in msg
-    log = _sh(fix["wt"], "git", "log", "-1", "--format=%an|%B")
+    log = _sh(fix["repo"], "git", "log", "-1", "--format=%an|%B", fix["branch"])  # the work area is removed
     assert log.startswith("AI Fix Bot|fix(wave-node): total is wrong") and "Root cause: subtracts" in log
     assert _remote_branches(fix).count("ai-fix") == 0
-    assert _sh(fix["wt"], "git", "status", "--short") == ""
+    assert not fix["wt"].exists()  # cleaned up after shipping; the branch (with the commit) is kept
 
 
 def test_approve_with_push_enabled_pushes_the_branch(fix, cfg):
@@ -105,9 +105,9 @@ def test_second_approval_finds_nothing_to_commit(fix):
 
 
 def test_remote_urls_are_parsed():
-    for url in ("git@github.com:AA-Solutions-tech/Wave.git", "https://github.com/AA-Solutions-tech/Wave.git",
-                "https://user@github.com/AA-Solutions-tech/Wave", "ssh://git@github.com/AA-Solutions-tech/Wave.git"):
-        assert ship.parse_remote(url) == ("AA-Solutions-tech", "Wave")
+    for url in ("git@github.com:syberviz-solutions/Wave.git", "https://github.com/syberviz-solutions/Wave.git",
+                "https://user@github.com/syberviz-solutions/Wave", "ssh://git@github.com/syberviz-solutions/Wave.git"):
+        assert ship.parse_remote(url) == ("syberviz-solutions", "Wave")
     assert ship.parse_remote("/tmp/remote.git") is None and ship.parse_remote("git@gitlab.com:a/b.git") is None
 
 
@@ -156,7 +156,8 @@ def test_auto_mode_commits_at_once_and_sends_a_summary_not_a_card(auto):
     assert not auto["sent"]  # no approval card
     title, body = auto["mails"][0]
     assert title.startswith("fix shipped:") and "FIX SHIPPED" in body and "committed" in body
-    assert _sh(auto["wt"], "git", "log", "-1", "--format=%s").startswith("fix(wave-node)")
+    assert _sh(auto["repo"], "git", "log", "-1", "--format=%s", auto["branch"]).startswith("fix(wave-node)")
+    assert not auto["wt"].exists()
     assert "DRY_RUN_PUSH=true" in body  # push stays off until the flag is flipped
     assert auto["branch"] not in _remote_branches(auto)
 
@@ -186,6 +187,38 @@ def test_pull_request_is_ready_for_review_when_tests_ran(auto, cfg, monkeypatch)
                         _Resp(201, {"html_url": "u"}))
     ship.offer(auto["result"], auto["inv"])
     assert seen["json"]["draft"] is False
+
+
+def test_a_fix_with_no_tests_is_held_for_approval_even_in_auto_mode(auto):
+    ship.offer({**auto["result"], "requires_approval": True}, auto["inv"])  # test_cmd is empty in this fixture
+    title, body, buttons = auto["sent"][0]
+    assert "HELD FOR APPROVAL" in body and "no tests ran" in body and [b[0] for b in buttons] == ["Approve", "Reject"]
+    assert not auto["mails"] and _sh(auto["wt"], "git", "log", "-1", "--format=%s") == "init"
+
+
+def test_a_review_concern_is_named_as_the_reason_it_is_held(auto, cfg):
+    cfg(test_cmd="python --version")
+    ship.offer({**auto["result"], "requires_approval": True, "review": "fail"}, auto["inv"])
+    body = auto["sent"][0][1]
+    assert "HELD FOR APPROVAL" in body and "self-review raised concerns" in body and "no tests ran" not in body
+
+
+def test_shipping_removes_the_work_area_but_keeps_the_branch(auto):
+    ship.offer(auto["result"], auto["inv"])
+    assert not auto["wt"].exists()
+    assert auto["branch"] in _sh(auto["repo"], "git", "branch", "--list", auto["branch"])
+
+
+def test_a_failed_push_keeps_the_work_area_so_the_push_can_be_retried(fix, cfg):
+    cfg(dry_run_push=False)
+    _sh(fix["repo"], "git", "remote", "set-url", "origin", str(fix["remote"]) + "-missing")
+    _decide(ship.offer(fix["result"], fix["inv"]), "approve")
+    assert fix["wt"].is_dir()
+
+
+def test_pending_work_areas_are_protected_from_the_janitor(fix):
+    ship.offer(fix["result"], fix["inv"])  # approve mode: waiting for a decision
+    assert ship.pending_worktrees() == {fix["wt"].name}
 
 
 def test_a_high_risk_fix_is_held_for_approval_even_in_auto_mode(auto):

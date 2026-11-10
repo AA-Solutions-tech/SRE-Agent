@@ -18,11 +18,23 @@ DEFAULT_MODELS = {
 }
 
 
-def get_llm(temperature: float = 0.0, **kwargs) -> BaseChatModel:
+def _temperature() -> dict:
+    """{"temperature": x} only when LLM_TEMPERATURE is set, else {} (the provider's own default).
+
+    Newer models reject a custom temperature with HTTP 400, and the agent used to send 0.0 on every call, so no
+    analysis ever ran. Whatever a caller asks for, nothing is sent unless the operator sets LLM_TEMPERATURE."""
+    raw = os.getenv("LLM_TEMPERATURE", "").strip()
+    try:
+        return {"temperature": float(raw)} if raw else {}
+    except ValueError:
+        return {}
+
+
+def get_llm(temperature: float | None = None, **kwargs) -> BaseChatModel:
     """Return a LangChain chat model for LLM_PROVIDER / LLM_MODEL.
 
     Args:
-        temperature: 0 = deterministic (good for agents/tools).
+        temperature: accepted for compatibility and ignored; set LLM_TEMPERATURE to send one (see _temperature).
         **kwargs: passed straight to the provider class (e.g. max_tokens=2000).
     Raises:
         ValueError: unknown LLM_PROVIDER.
@@ -30,25 +42,26 @@ def get_llm(temperature: float = 0.0, **kwargs) -> BaseChatModel:
     """
     provider = settings.llm_provider
     model = settings.llm_model or DEFAULT_MODELS.get(provider, "")
+    temp = _temperature()
     if provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
-        return ChatAnthropic(model=model, temperature=temperature, **kwargs)
+        return ChatAnthropic(model=model, **temp, **kwargs)
     if provider == "openai":
         from langchain_openai import ChatOpenAI
-        return ChatOpenAI(model=model, temperature=temperature, **kwargs)
+        return ChatOpenAI(model=model, **temp, **kwargs)
     if provider == "xai":
         from langchain_openai import ChatOpenAI
-        return ChatOpenAI(model=model, temperature=temperature, base_url="https://api.x.ai/v1",
+        return ChatOpenAI(model=model, **temp, base_url="https://api.x.ai/v1",
                           api_key=os.getenv("XAI_API_KEY"), **kwargs)
     if provider == "groq":
         from langchain_groq import ChatGroq  # reads GROQ_API_KEY from env
-        return ChatGroq(model=model, temperature=temperature, **kwargs)
+        return ChatGroq(model=model, **temp, **kwargs)
     if provider == "gemini":
         from langchain_google_genai import ChatGoogleGenerativeAI  # pip install langchain-google-genai
-        return ChatGoogleGenerativeAI(model=model, temperature=temperature, **kwargs)
+        return ChatGoogleGenerativeAI(model=model, **temp, **kwargs)
     if provider == "openai_compatible":
         from langchain_openai import ChatOpenAI
-        return ChatOpenAI(model=model, temperature=temperature, base_url=settings.openai_base_url,
+        return ChatOpenAI(model=model, **temp, base_url=settings.openai_base_url,
                           api_key=os.getenv("OPENAI_API_KEY", "not-needed"), **kwargs)
     raise ValueError(f"Unknown LLM_PROVIDER '{provider}'")
 

@@ -154,6 +154,8 @@ def step(logger: logging.Logger, step_id: str, message: str, level: str = "info"
     lvl = getattr(logging, level.upper(), logging.INFO)
     trace = fields.get("trace") or current_trace()
     logger.log(lvl, message, extra={"step": step_id, **({"trace": trace} if trace else {}), **fields})
+    if lvl == logging.DEBUG and os.getenv("SRE_TRACE_DEBUG", "false").lower() != "true":
+        return  # DEBUG goes to the log only when the log level allows it; it is never printed to the console
     if os.getenv("SRE_TRACE", "true").lower() != "false":
         kv = " ".join(f"{k}={_redact({k: v})[k]}" for k, v in fields.items() if k != "trace")
         ts = datetime.now().strftime("%H:%M:%S")

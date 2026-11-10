@@ -93,19 +93,22 @@ def test_template_propose_then_approve_via_http(monkeypatch, client):
     assert db.get_item(item)["status"] == "awaiting_act"
 
     assert client.get(f"/approve/{item}/act/approve?token=bad").status_code == 403
-    r = client.get(f"/approve/{item}/act/approve?token={approval_token(item, 'act')}")
+    link = f"/approve/{item}/act/approve?token={approval_token(item, 'act')}"
+    shown = client.get(link)  # opening the link only asks for confirmation
+    assert shown.status_code == 200 and "Confirm" in shown.text and db.get_item(item)["status"] == "awaiting_act"
+    r = client.post(link)
     assert r.status_code == 200 and "executed" in r.text
     assert db.get_item(item)["status"] == "act_approved"
     assert sent[-1][0] == "done"
     # link is single-use
-    assert client.get(f"/approve/{item}/act/approve?token={approval_token(item, 'act')}").status_code == 409
+    assert client.post(link).status_code == 409
 
 
 def test_http_reject_and_unknown(client):
     item = db.create_item("template", {"proposal": "p"}, status="awaiting_act")
-    r = client.get(f"/approve/{item}/act/reject?token={approval_token(item, 'act')}")
+    r = client.post(f"/approve/{item}/act/reject?token={approval_token(item, 'act')}")
     assert r.status_code == 200 and "Rejected" in r.text
-    assert client.get(f"/approve/ghost/act/approve?token={approval_token('ghost', 'act')}").status_code == 404
+    assert client.post(f"/approve/ghost/act/approve?token={approval_token('ghost', 'act')}").status_code == 404
 
 
 def test_health_and_run_endpoint(client, monkeypatch):

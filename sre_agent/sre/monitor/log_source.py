@@ -40,8 +40,8 @@ def get_source(name_or_path: str | None = None) -> LogSource:
 
     Args:
         name_or_path: 'local_file' (default log path), 'ssh' (remote log over
-            SSH via core.ssh_logs), or any other string which is treated as a
-            local file path. Empty/None falls back to MONITOR_SOURCE env
+            SSH via core.ssh_logs), 'docker:<container>', 'journald:<unit>',
+            or any other string which is treated as a local file path. Empty/None falls back to MONITOR_SOURCE env
             (default 'local_file').
     Raises:
         ValueError: only for the reserved unknown-source case — file paths
@@ -57,4 +57,12 @@ def get_source(name_or_path: str | None = None) -> LogSource:
         from sre_agent.core.ssh_logs import RemoteLogReader
 
         return RemoteLogReader()
+    if key.startswith("docker:"):
+        from .command_logs import DockerReader
+
+        return DockerReader(key.split(":", 1)[1])
+    if key.startswith("journald:"):
+        from .command_logs import JournaldReader
+
+        return JournaldReader(key.split(":", 1)[1])
     return LocalFileReader(key)  # anything else is a file path

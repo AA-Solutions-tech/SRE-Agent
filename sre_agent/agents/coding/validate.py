@@ -5,10 +5,24 @@ Path checks mirror core.git_tools.safe_path/BLOCKED_PARTS but work without
 a repo root so validate() stays unit-testable offline.
 """
 import os
+import re
 from pathlib import PurePosixPath
 
 from sre_agent.core.config import settings
-from sre_agent.core.git_tools import BLOCKED_PARTS
+from sre_agent.core.git_tools import BLOCKED_PARTS, is_secret_path
+
+# Files that decide what runs in CI and in production. A model-written change to one of these is a way to run
+# code with secrets or to ship something unreviewed, so a human makes those changes (CODING_ALLOW_INFRA_PATHS=true
+# lifts the rule).
+INFRA_DIRS = {".github", ".circleci", ".gitlab", ".husky", ".buildkite", "terraform", "deploy", "deployment", "k8s",
+              "helm", "ansible"}
+INFRA_NAME_RE = re.compile(r"^(?:dockerfile(?:\.(?!(?:py|js|ts|rb|go|java|cs|rs|php|md)$)[\w.-]+)?|.*\.dockerfile|docker-compose.*\.ya?ml|jenkinsfile|\.gitlab-ci\.ya?ml|"
+                           r"azure-pipelines\.ya?ml|bitbucket-pipelines\.ya?ml|cloudbuild\.ya?ml|.*\.tf|makefile)$", re.I)
+
+
+def is_infra_path(rel: str) -> bool:
+    parts = PurePosixPath(rel.strip().replace("\\", "/")).parts
+    return bool(INFRA_DIRS & {p.lower() for p in parts[:-1]}) or bool(parts and INFRA_NAME_RE.match(parts[-1]))
 
 REQUIRED_INVESTIGATION_FIELDS = (
     "root_cause",
@@ -31,6 +45,11 @@ def _is_allowed_rel_path(rel: str) -> tuple[bool, str]:
         return False, "path escapes the repository"
     if BLOCKED_PARTS & parts:
         return False, "path is not allowed (.git/.env/node_modules/__pycache__)"
+    if is_secret_path(rel):
+        return False, "path looks like a credentials file and is never read or edited by the agent"
+    if is_infra_path(rel) and os.getenv("CODING_ALLOW_INFRA_PATHS", "false").strip().lower() != "true":
+        return False, ("path is a CI/deploy file (workflows, Dockerfile, Terraform, Makefile ...): a person makes "
+                       "that change (CODING_ALLOW_INFRA_PATHS=true lifts this)")
     # Optional project allowlist: CODING_ALLOWED_PATHS="src/,app/" (prefix match).
     allowed = [p.strip().rstrip("/") for p in settings.coding_allowed_paths if p.strip()]
     if allowed and not any(rel.strip() == a or rel.strip().startswith(a + "/") for a in allowed):

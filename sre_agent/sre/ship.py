@@ -11,16 +11,18 @@ else give the compare link. The pull request is the review gate: a person merges
 """
 import os
 import re
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
 
 from sre_agent.core.approvals import on_approval, request_approval
 from sre_agent.core.config import settings
-from sre_agent.core.db import create_item, get_item, update_item
-from sre_agent.core.git_tools import _git, diff as staged_diff
+from sre_agent.core.db import create_item, get_item, list_items, update_item
+from sre_agent.core.git_tools import _git, cleanup_worktree, diff as staged_diff
 from sre_agent.core.notify import notify
 from sre_agent.core.sre_log import bind_trace, get_logger, step
+from sre_agent.sre import issues
 
 STAGE = "ship_fix"
 logger = get_logger("ship")
@@ -99,7 +101,7 @@ def offer(result: dict, investigation_id: str) -> str | None:
         "version": inv.get("version", 1),
     })
     tag = f"[trace {inv.get('signal_id')}]"
-    held = bool(result.get("high_risk"))
+    held = bool(result.get("high_risk") or result.get("requires_approval"))
     if mode() == "auto" and not held:
         msg = ship_fix(fix_id)
         body = NL.join([
@@ -116,8 +118,13 @@ def offer(result: dict, investigation_id: str) -> str | None:
     patch = _diff_view(wt)[1]
     push = "will push the branch" if not settings.dry_run_push else "will NOT push (DRY_RUN_PUSH=true): commit only"
     pr = "opens a pull request" if settings.github_token else "gives you the pull request link (no GITHUB_TOKEN)"
-    why = ("HELD FOR APPROVAL: high-risk change (touches auth, secrets or migrations, is very large, or an edit "
-           "failed). In auto mode this is the only kind that waits." + NL) if held else ""
+    reasons = [r for r in (
+        "high-risk change (touches auth, secrets or migrations, is very large, or an edit failed)"
+        if result.get("high_risk") else "",
+        "no tests ran, so only syntax was checked" if not settings.test_cmd else "",
+        "the self-review raised concerns (see the risks below)" if result.get("review") == "fail" else "",
+    ) if r] or ["it needs a human decision (see the risks below)"]
+    why = (f"HELD FOR APPROVAL: {'; '.join(reasons)}. In auto mode only changes like this wait." + NL) if held else ""
     body = NL.join([
         f"*FIX READY FOR REVIEW*  {inv.get('service')} · {inv.get('error')}",
         f"Branch `{result.get('branch')}` · plan version {inv.get('version', 1)} · "
@@ -135,6 +142,81 @@ def offer(result: dict, investigation_id: str) -> str | None:
          investigation_id=investigation_id, branch=result.get("branch"),
          files=len(result.get("changed_files") or []))
     return fix_id
+
+
+PR_URL_RE = re.compile(r"github\.com/([^/\s]+)/([^/\s]+)/pull/(\d+)")
+
+
+def pending_worktrees() -> set[str]:
+    """Work-area folder names still waiting for a human decision (the janitor must not remove these)."""
+    return {Path(i["data"]["worktree"]).name for i in list_items(kind="fix_ready", status=f"awaiting_{STAGE}")
+            if i["data"].get("worktree")}
+
+
+def pr_status(owner: str, repo: str, number: int) -> dict | None:
+    """{"state": "open"|"closed", "merged": bool, "merged_at": iso|None} from GitHub, None when unknown."""
+    if not settings.github_token:
+        return None
+    r = httpx.get(f"https://api.github.com/repos/{owner}/{repo}/pulls/{number}", timeout=15,
+                  headers={"Authorization": f"Bearer {settings.github_token}", "Accept": "application/vnd.github+json",
+                           "X-GitHub-Api-Version": "2022-11-28"})
+    if r.status_code != 200:
+        return None
+    j = r.json()
+    return {"state": j.get("state"), "merged": bool(j.get("merged")), "merged_at": j.get("merged_at")}
+
+
+def _pr_reminder_hours() -> float:
+    try:
+        return float(os.getenv("PR_REMIND_HOURS", "24"))
+    except ValueError:
+        return 24.0
+
+
+def poll_prs(now: datetime | None = None) -> list[str]:
+    """Follow fix pull requests after they are opened. Returns the events seen ("merged", "closed", "reminded").
+
+    merged -> verification starts (the issue must stay quiet after the merge); closed unmerged -> the fix did not
+    land, the issue is reopened for a decision; still open for PR_REMIND_HOURS -> a reminder that nobody reviewed it."""
+    now = now or datetime.now(timezone.utc)
+    events: list[str] = []
+    for item in list_items(kind="issue"):
+        d, issue_id = item["data"], item["id"]
+        if d.get("state") != "fix_pending" or not d.get("pr_number") or d.get("pr_state") in ("merged", "closed"):
+            continue
+        try:
+            status = pr_status(d["pr_repo"].split("/")[0], d["pr_repo"].split("/")[1], int(d["pr_number"]))
+        except (httpx.HTTPError, KeyError, ValueError, IndexError):
+            continue
+        name = f"{d.get('service')} · {d.get('error')}"
+        if status is None:
+            continue
+        if status["merged"]:
+            merged_at = issues._parse(status.get("merged_at")) or now
+            issues.mark_merged(issue_id, merged_at)
+            notify(f"fix merged: {d.get('service')} {d.get('severity', 'HIGH')} {d.get('error')}", NL.join([
+                f"The pull request for {name} was merged ({d.get('pr_url')}).",
+                f"Verifying now: the issue closes as fixed only if the error stays away for "
+                f"{issues.quiet_window().total_seconds() / 60:g} min after the merge. Errors in the first "
+                f"{issues.deploy_grace().total_seconds() / 60:g} min are treated as the old version still running; "
+                "after that, a repeat reopens it as a fix that did not work."]))
+            events.append("merged")
+        elif status["state"] == "closed":
+            update_item(issue_id, pr_state="closed")
+            issues.mark_pr_closed(issue_id)
+            notify(f"fix failed: {d.get('service')} {d.get('severity', 'HIGH')} {d.get('error')}",
+                   f"The pull request for {name} was closed without being merged ({d.get('pr_url')}), so the fix "
+                   "did not land. The issue is open again and will be reminded about until someone decides.")
+            events.append("closed")
+        else:
+            since = issues._parse(d.get("last_pr_reminder")) or issues._parse(d.get("state_since")) or now
+            if now - since >= timedelta(hours=_pr_reminder_hours()):
+                update_item(issue_id, last_pr_reminder=now.isoformat())
+                notify(f"reminder: {d.get('service')} {d.get('error')} fix is waiting for review",
+                       f"The pull request for {name} has not been merged yet: {d.get('pr_url')}. The error is not "
+                       "counted as fixed until it is merged and stays quiet afterwards.")
+                events.append("reminded")
+    return events
 
 
 def open_pull_request(d: dict, inv_like: dict, result_like: dict) -> str:
@@ -165,6 +247,8 @@ def ship_fix(item_id: str) -> str:
     item = get_item(item_id)
     d = item["data"] if item else {}
     bind_trace(d.get("signal_id"))
+    if d.get("outcome") in ("committed", "pushed"):
+        return f"nothing to commit: this fix was already shipped (commit {d.get('commit', '?')})"
     wt = Path(d.get("worktree", ""))
     if not wt.is_dir():
         return "cannot ship: the worktree is gone"
@@ -194,6 +278,7 @@ def ship_fix(item_id: str) -> str:
         except (RuntimeError, httpx.HTTPError) as e:
             out += f". The pull request could not be opened ({str(e)[:120]}); open it from GitHub"
     _link_issue(d, sha, pr_url)
+    cleanup_worktree(wt)  # the commit lives on the branch: the work area is no longer needed (the branch is kept)
     step(logger, "ship.02.decision", "fix shipped", fix_id=item_id, branch=d["branch"], result=out[:200])
     return out
 
@@ -203,7 +288,10 @@ def _link_issue(d: dict, sha: str, pr_url: str) -> None:
     sig = get_item(d["signal_id"]) if d.get("signal_id") else None
     issue_id = (sig["data"] if sig else {}).get("issue_id")
     if issue_id and get_item(issue_id):
-        update_item(issue_id, branch=d.get("branch"), commit=sha, pr_url=pr_url or None)
+        m = PR_URL_RE.search(pr_url or "")
+        update_item(issue_id, branch=d.get("branch"), commit=sha, pr_url=pr_url or None,
+                    pr_number=int(m.group(3)) if m else None, pr_repo=f"{m.group(1)}/{m.group(2)}" if m else None,
+                    pr_state="open" if m else None)
 
 
 @on_approval(STAGE)

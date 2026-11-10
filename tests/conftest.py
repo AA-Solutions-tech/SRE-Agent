@@ -1,6 +1,7 @@
 """Shared fixtures. Settings is a frozen dataclass, so we override fields via object.__setattr__."""
 import os
 import tempfile
+import threading
 
 import pytest
 
@@ -51,3 +52,36 @@ def _offline_llm(monkeypatch):
     """Real keys in .env must never make tests call an LLM; agents then use their offline fallbacks."""
     for key in ("GROQ_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "XAI_API_KEY", "GOOGLE_API_KEY"):
         monkeypatch.delenv(key, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _finish_background_threads():
+    """A test that starts the coding thread must not leave it writing into the NEXT test's database."""
+    yield
+    for t in threading.enumerate():
+        if t.name == "sre-auto-coding" and t is not threading.current_thread():
+            t.join(10)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_anomaly_counters():
+    """The spike detector keeps its counts in memory; one test's burst must not alert in another test."""
+    from sre_agent.sre import anomaly
+
+    anomaly.reset()
+    yield
+    anomaly.reset()
+
+
+@pytest.fixture(autouse=True)
+def _legacy_approval_links(monkeypatch):
+    """Many older tests mint the original "<id>:<stage>" token; tests of the new link rules switch this off."""
+    monkeypatch.setenv("APPROVAL_ACCEPT_LEGACY", "true")
+
+
+@pytest.fixture(autouse=True)
+def _coding_extras_off(monkeypatch):
+    """Tests of the base coding flow stay deterministic; the regression-test and self-review steps have their own
+    tests (tests/test_coding_gaps.py) that switch them on."""
+    monkeypatch.setenv("CODING_SELF_REVIEW", "false")
+    monkeypatch.setenv("CODING_WRITE_TESTS", "false")

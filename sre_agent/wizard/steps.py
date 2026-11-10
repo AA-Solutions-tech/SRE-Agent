@@ -97,9 +97,13 @@ def logs(p: Prompter, cur: dict, ops: ModuleType = ssh_ops) -> dict:
     out["MONITOR_SERVICE"] = p.text("Service name (shown in incidents)", current=cur.get("MONITOR_SERVICE", ""),
                                     required=True, validate=v.no_spaces)
     if source == "local_file":
-        out["MONITOR_LOG_PATH"] = p.text("Log file path", current=cur.get("MONITOR_LOG_PATH", ""), required=True,
-                                         help="Also accepts {date} or a wildcard, e.g. /var/log/app/errors-*.jsonl",
-                                         validate=v.absolute_path)
+        out["MONITOR_LOG_PATH"] = p.text(
+            "Log file path(s)", current=cur.get("MONITOR_LOG_PATH", ""), required=True, validate=v.log_sources,
+            help="Several sources: separate with commas and name each one after an @, e.g. "
+                 "/var/log/qa/error.log@qa-api, /var/log/prod/error.log@prod-api, docker:web@storefront. "
+                 "Also accepts {date} or a wildcard, e.g. /var/log/app/errors-*.jsonl")
+        p.info("A log under /home needs two extra commands for the service; `sre-agent doctor` prints them if it "
+               "cannot read the file.")
         return out
     out["SSH_HOST"] = p.text("Server host or IP", current=cur.get("SSH_HOST", ""), required=True, validate=v.host)
     out["SSH_PORT"] = p.text("SSH port", current=cur.get("SSH_PORT", ""), default="22", validate=v.port)
@@ -121,6 +125,10 @@ def web(p: Prompter, cur: dict) -> dict:
     p.info("Use the public HTTPS address of your reverse proxy (nginx/Caddy) in production.")
     out = {"APP_BASE_URL": p.text("Public URL", current=cur.get("APP_BASE_URL", ""),
                                   default="http://localhost:8000", validate=v.url)}
+    if v.is_loopback_url(out["APP_BASE_URL"]):
+        p.info("WARNING: this is a loopback address. Buttons opened from Slack or email will open the reader's own "
+               "computer and no decision will be recorded. Use the public HTTPS URL, or set up the Slack app so "
+               "the buttons work inside Slack (see docs/product/slack-buttons-setup.md).")
     out["SRE_BIND"] = p.choice("Listen on", [("127.0.0.1", "this machine only, behind a reverse proxy (safer)"),
                                              ("0.0.0.0", "all network interfaces")],
                                current=cur.get("SRE_BIND", ""), default="127.0.0.1")

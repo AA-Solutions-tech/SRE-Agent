@@ -10,6 +10,7 @@ from .router import Route
 CAPABLE = ("monitor", "incident", "coding")
 
 PREFERENCE = {
+    "CRITICAL": ("incident", "coding", "monitor"),
     "HIGH": ("incident", "coding", "monitor"),
     "MEDIUM": ("incident", "monitor", "coding"),
     "LOW": ("monitor", "incident", "coding"),

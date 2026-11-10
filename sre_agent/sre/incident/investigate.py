@@ -19,7 +19,8 @@ from pathlib import Path
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 
-from sre_agent.core.git_tools import BLOCKED_PARTS, _git, safe_path
+from sre_agent.core.git_tools import BLOCKED_PARTS, _git, is_secret_path, safe_path
+from sre_agent.core.redact import redact
 from sre_agent.core.llm import get_llm, text_of
 from sre_agent.core.sre_log import get_logger, step
 
@@ -68,7 +69,8 @@ When done, reply with ONE JSON object and nothing else, with exactly these keys:
 
 def _skip(path: str) -> bool:
     low = path.lower()
-    return bool(BLOCKED_PARTS & set(Path(path).parts)) or low.endswith(SKIP_EXT) or any(s in low for s in SKIP_PARTS)
+    return (bool(BLOCKED_PARTS & set(Path(path).parts)) or is_secret_path(path) or low.endswith(SKIP_EXT)
+            or any(s in low for s in SKIP_PARTS))
 
 
 def _hits(out: str, keep, limit: int) -> list[str]:
@@ -90,7 +92,7 @@ def make_tools(repo: Path, read: set[str]) -> list:
     def grep_code(term: str) -> str:
         """Fixed-string search in tracked SOURCE files (not tests/docs). Returns up to 20 'path:line: text' hits."""
         rows = _hits(_git(repo, "grep", "-n", "-I", "-F", "-e", term, check=False), lambda p: not _skip(p), 20)
-        return "\n".join(rows) or "no matches"
+        return redact("\n".join(rows), kv=False) or "no matches"
 
     @tool
     def read_file(path: str, start_line: int = 1, end_line: int = 120, line_start: int | None = None,
@@ -105,13 +107,13 @@ def make_tools(repo: Path, read: set[str]) -> list:
         end = min(len(lines), int(line_end if line_end is not None else end_line), start + MAX_READ_LINES - 1)
         read.add(p.relative_to(repo.resolve()).as_posix())
         body = "\n".join(f"{i}: {lines[i - 1]}" for i in range(start, end + 1))
-        return f"{path} lines {start}-{end} of {len(lines)}\n{body}"
+        return redact(f"{path} lines {start}-{end} of {len(lines)}\n{body}", kv=False)
 
     @tool
     def find_usages(symbol: str) -> str:
         """Find where a function/variable name is used (whole-word search in source files). Up to 25 hits."""
         rows = _hits(_git(repo, "grep", "-n", "-I", "-w", "-F", "-e", symbol, check=False), lambda p: not _skip(p), 25)
-        return "\n".join(rows) or "no usages"
+        return redact("\n".join(rows), kv=False) or "no usages"
 
     @tool
     def git_history(path: str, count: int = 5) -> str:
@@ -124,9 +126,10 @@ def make_tools(repo: Path, read: set[str]) -> list:
     @tool
     def search_config(term: str) -> str:
         """Search config and docs (md/json/yml/env.example) for a name. Up to 10 hits."""
-        keep = lambda p: p.lower().endswith(CONFIG_EXT) and "node_modules" not in p and "lock" not in p.lower()  # noqa: E731
+        keep = lambda p: (p.lower().endswith(CONFIG_EXT) and "node_modules" not in p and "lock" not in p.lower()  # noqa: E731
+                          and not is_secret_path(p))
         rows = _hits(_git(repo, "grep", "-n", "-I", "-F", "-e", term, check=False), keep, 10)
-        return "\n".join(rows) or "no matches in config/docs"
+        return redact("\n".join(rows), kv=False) or "no matches in config/docs"
 
     return [grep_code, read_file, find_usages, git_history, search_config]
 

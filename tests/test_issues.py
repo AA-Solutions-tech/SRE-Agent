@@ -42,6 +42,16 @@ def test_rejected_issue_stays_quiet_until_snooze_ends(monkeypatch):
     assert issues.record_occurrence(_sig(), "s3")[1] == "investigate"
 
 
+def test_ignored_issue_returns_as_normal_card_after_threshold(monkeypatch):
+    monkeypatch.setenv("ISSUE_IGNORE_THRESHOLD", "3")
+    issue_id, _ = issues.record_occurrence(_sig(), "s1")
+    issues.mark_ignored(issue_id)
+    actions = [issues.record_occurrence(_sig(), f"r{i}")[1] for i in range(4)]
+    assert actions == ["count", "count", "count", "investigate"]
+    d = get_item(issue_id)["data"]
+    assert d["state"] == "open" and d["investigation_id"] is None
+
+
 def test_sweep_closes_quiet_issue_and_reminds_developer_fix_issue():
     quiet_id, _ = issues.record_occurrence(_sig("quiet error"), "q1")
     issues.mark_fix_pending(quiet_id)
@@ -96,3 +106,38 @@ def test_issues_endpoints_are_read_only_views():
     assert one["state"] == "open" and one["count"] == 1 and one["signal_ids"] == ["s1"]
     assert c.get("/issues/nope").status_code == 404
     assert c.post("/issues").status_code == 405  # nothing can be changed through this endpoint
+
+
+def test_fingerprint_ignores_emails_urls_uuids_and_ips():
+    a = issues.fingerprint("s", "mail failed for dummy@example.com via https://smtp.x.io/send?id=1 from 10.0.0.5")
+    b = issues.fingerprint("s", "mail failed for other.person+tag@corp.co.uk via https://smtp.y.io/send?id=2 from 192.168.1.9")
+    assert a == b
+    u1 = issues.fingerprint("s", "job 550e8400-e29b-41d4-a716-446655440000 failed")
+    u2 = issues.fingerprint("s", "job 123e4567-e89b-12d3-a456-426614174000 failed")
+    assert u1 == u2 and a != u1
+
+
+def test_transient_kind_waits_for_the_threshold_inside_the_window(monkeypatch):
+    monkeypatch.setenv("WATCH_THRESHOLD", "3")
+    sig = {**_sig("429 too many requests"), "category": "rate_limit", "evidence": ["x"]}
+    issue_id, a1 = issues.record_occurrence(sig, "s1")
+    assert a1 == "count" and get_item(issue_id)["data"]["state"] == "watching"
+    assert issues.record_occurrence(sig, "s2")[1] == "count"
+    assert issues.record_occurrence(sig, "s3")[1] == "investigate"
+    assert get_item(issue_id)["data"]["state"] == "open"
+
+
+def test_old_hits_fall_out_of_the_watch_window(monkeypatch):
+    from sre_agent.core.db import update_item
+
+    monkeypatch.setenv("WATCH_THRESHOLD", "2")
+    sig = {**_sig("429 too many requests"), "category": "rate_limit", "evidence": ["x"]}
+    issue_id, _ = issues.record_occurrence(sig, "s1")
+    old = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    update_item(issue_id, watch_events=[[old, 1]])
+    assert issues.record_occurrence(sig, "s2")[1] == "count"  # the hour-old hit no longer counts
+    assert issues.record_occurrence(sig, "s3")[1] == "investigate"
+
+
+def test_code_errors_are_never_watched():
+    assert issues.record_occurrence(_sig("TypeError: x"), "s1")[1] == "investigate"

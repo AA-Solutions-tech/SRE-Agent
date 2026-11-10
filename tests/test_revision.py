@@ -110,7 +110,7 @@ def test_revision_creates_version_two_and_kills_the_old_links(plan, cards):
     assert get_item(plan["issue"])["data"]["revisions"] == 1
     title, body, buttons = cards[-1]
     assert "Plan version 2" in body and "WHAT CHANGED SINCE VERSION 1" in body and "b.js" in body
-    assert [b[0] for b in buttons] == ["Approve", "Reject", "I'll fix this", "Request changes"]
+    assert [b[0] for b in buttons] == ["Approve", "Reject", "I'll fix this", "Ignore", "Ignore similar", "Request changes"]
     assert buttons[-1][1] == feedback_url(new_id, 2)
     assert list_items(kind="plan_revision")[0]["data"]["new_investigation_id"] == new_id
 

@@ -59,11 +59,11 @@ def test_card_is_human_summary_not_json(tmp_path, captured):
     assert len(captured) == 1
     title, body, buttons = captured[0]
     assert "payment-api" in title and "MongoNetworkTimeout" in title
-    assert "Root cause analysis" in body and "Evidence (1 lines)" in body
+    assert "ROOT CAUSE" in body and "LOG EVIDENCE" in body
     assert '{"service"' not in body and '"evidence"' not in body
-    assert len(buttons) == 3
+    assert len(buttons) == 5
     labels = [b[0] for b in buttons]
-    assert labels == ["Approve", "Reject", "I'll fix this"]
+    assert labels == ["Approve", "Reject", "I'll fix this", "Ignore", "Ignore similar"]
     assert f"/approve/" in buttons[0][1] and "/" + incident.STAGE + "/approve?" in buttons[0][1]
 
 

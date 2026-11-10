@@ -5,6 +5,10 @@ Boundary rule: machines exchange the signal JSON; humans get the
 rendered markdown summary. Raw JSON never reaches Slack.
 """
 import json
+
+NL = chr(10)
+
+from sre_agent.core.redact import redact
 from sre_agent.sre import issues, revision
 
 EVIDENCE_SHOWN = 5
@@ -23,7 +27,7 @@ RELATED PAST SIGNALS (same service):
 
 def build_rca_prompt(signal: dict, related: list[dict]) -> str:
     return RCA_PROMPT.format(
-        signal=json.dumps(signal, indent=1)[:6000],
+        signal=redact(json.dumps(signal, indent=1))[:6000],
         related=json.dumps(related, indent=1)[:4000] or "none",
     )
 
@@ -41,20 +45,42 @@ def heuristic_rca(signal: dict, occurrences: int) -> str:
     )
 
 
-def build_card(signal: dict, rca: str, occurrences: int) -> tuple[str, str]:
+def pretty_line(line) -> str:
+    """One log line for humans: a JSON log becomes 'time level message', anything else is shortened."""
+    text = redact(line)
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return text[:200]
+    if not isinstance(data, dict):
+        return text[:200]
+    parts = [str(data.get(k)) for k in ("timestamp", "level") if data.get(k)]
+    return " ".join(parts + [str(data.get("message") or data.get("msg") or text)])[:200]
+
+
+def ai_banner(reason) -> str:
+    """The first thing on a card whose analysis is a template because the model call failed."""
+    if not reason:
+        return ""
+    return (f"*AI ANALYSIS UNAVAILABLE*{NL}{reason}{NL}"
+            f"The text below is a template built from the log line, not a diagnosis. Fix the model call "
+            f"(see the agent log and LLM_* settings) to get a real analysis.{NL}{NL}")
+
+
+def build_card(signal: dict, rca: str, occurrences: int, ai_error: str | None = None) -> tuple[str, str]:
     """Render the human summary (title, markdown body) for Slack."""
     service = signal.get("service", "?")
     severity = signal.get("severity", "?")
     error = signal.get("error", "?")
     evidence = signal.get("evidence", []) or []
-    shown = "\n".join(f"`{line[:160]}`" for line in evidence[:EVIDENCE_SHOWN])
+    shown = "\n".join(f"• `{pretty_line(line)}`" for line in evidence[:EVIDENCE_SHOWN])
     more = f"\n_+{len(evidence) - EVIDENCE_SHOWN} more lines_" if len(evidence) > EVIDENCE_SHOWN else ""
     title = f"investigate: {service} {severity} {error}"
     body = (
-        f"*Service:* {service}   *Severity:* {severity}   *Error:* {error}\n"
-        f"*Occurrences on this service:* {occurrences}\n\n"
-        f"*Root cause analysis*\n{rca}\n\n"
-        f"*Evidence ({len(evidence)} lines)*\n{shown}{more}"
+        f"{ai_banner(ai_error)}"
+        f"*INCIDENT*\nSeen {occurrences} time(s) on this service.\n\n"
+        f"*ROOT CAUSE*\n{rca}\n\n"
+        f"*LOG EVIDENCE*  {len(evidence)} line(s)\n{shown}{more}"
     )
     return title, body
 
@@ -96,7 +122,9 @@ def build_analysis_card(signal: dict, analysis: dict, occurrences: int, signal_i
         f"• Approve: {approve_text}\n"
         f"• Reject: no action; the issue is snoozed for {issues.snooze_window().total_seconds() / 3600:g} h.\n"
         f"• I'll fix this: you take it yourself. The coding agent does not run, and you are reminded every "
-        f"{hours:g} h until the error has stopped for {quiet:g} min."
+        f"{hours:g} h until the error has stopped for {quiet:g} min.\n"
+        f"• Ignore: repeats are counted silently; you get a new card only if it occurs more than "
+        f"{issues.ignore_threshold()} more times."
         + (chr(10) + f"• Request changes: opens a form to ask for a new plan version ({revisions_left} revision(s) left)."
            + (" You can also just reply to this email; optional first-column lines: deny: path, only: folder, "
               "also: file, test: description, ops only." if revision.reply_enabled() else "")
@@ -123,9 +151,10 @@ def build_analysis_card(signal: dict, analysis: dict, occurrences: int, signal_i
                "cross-checked against the repository. Confidence is capped._\n\n" if analysis.get("limited") else "")
     title = f"investigate: {service} {severity} {error}"
     body = (
+        f"{ai_banner(analysis.get('ai_error'))}"
         f"{limited}"
         f"{version_line}"
-        f"*INCIDENT*  {service} · {severity} · {error}\n"
+        f"*INCIDENT*\n"
         f"{seen}"
         f"Signal `{signal_id or '?'}` · {occurrences} occurrence(s) of this error · "
         f"{len(signal.get('evidence', []) or [])} log line(s) in this signal · last seen {signal.get('ts', '?')}\n\n"
@@ -139,7 +168,7 @@ def build_analysis_card(signal: dict, analysis: dict, occurrences: int, signal_i
         f"*CODE EVIDENCE (checked against the repository)*\n{cited}\n\n"
         + (f"*OTHER EXPLANATIONS CONSIDERED*\n{bullets(alts)}\n\n" if alts else "")
         + (f"*RECENT HISTORY OF THESE FILES*\n{bullets(history[:6])}\n\n" if history else "")
-        + f"*LOG EVIDENCE*\n{bullets([str(e)[:200] for e in evidence[:6]])}\n\n"
+        + f"*LOG EVIDENCE*\n{bullets([pretty_line(e) for e in evidence[:6]])}\n\n"
         f"*RECOMMENDED FIX*  ({FIX_LABEL.get(fix_type, fix_type)} · risk: {analysis.get('risk', 'medium')})\n"
         f"{analysis.get('remediation', '')}\n\n"
         f"*SCOPE OF CHANGE*\n{scope}\n\n"

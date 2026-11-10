@@ -15,7 +15,7 @@ from sre_agent.core.approvals import on_approval
 from sre_agent.core.db import create_item, get_item, list_items, update_item
 from sre_agent.core.llm import get_llm, text_of
 from sre_agent.core.sre_log import bind_trace, get_logger, step
-from sre_agent.sre import issues
+from sre_agent.sre import classify, health, ignorelist, issues
 
 logger = get_logger("incident")
 
@@ -30,6 +30,7 @@ class State(TypedDict, total=False):
     analysis: dict
     rca: str
     investigation_id: str
+    ai_error: str      # why the model call failed, when the analysis is only a template
     summary: str
 
 
@@ -55,8 +56,20 @@ def gather(state: State) -> State:
 
 def inspect_code(state: State) -> State:
     bind_trace(state["signal_id"])
-    """Search REPO_DIR for the failing code; fields feed the coding agent. Never fails the run."""
+    """Operational errors get a rule-based diagnosis; anything else: search REPO_DIR for the failing code.
+    Fields feed the coding agent. Never fails the run."""
     from .code_inspect import inspect
+    from .diagnose import diagnose
+
+    try:
+        found = classify.classify(state["signal"])
+        if found:
+            step(logger, "incident.02a.classify", "operational error, rule-based diagnosis",
+                 category=found["category"], rule=found["rule"])
+            return {"analysis": diagnose(state["signal"], state["related"], found)}
+    except Exception as e:
+        step(logger, "incident.02a.classify", "rule diagnosis crashed, falling back to code inspection",
+             level="error", error=f"{type(e).__name__}: {e}"[:300])
 
     try:
         return {"analysis": inspect(state["signal"], state["related"]) or {}}
@@ -84,9 +97,16 @@ def rca(state: State) -> State:
         step(logger, "incident.03.rca", "RCA from LLM", chars=len(out), occurrences=occurrences)
         return {"rca": out}
     except Exception as e:
-        step(logger, "incident.03.rca", "LLM failed, using heuristic RCA", level="warning",
-             error=f"{type(e).__name__}: {e}"[:200], occurrences=occurrences)
-        return {"rca": heuristic_rca(state["signal"], occurrences)}
+        reason = f"{type(e).__name__}: {e}"[:200]
+        step(logger, "incident.03.rca", "LLM failed, using heuristic RCA", level="warning", error=reason,
+             occurrences=occurrences)
+        try:
+            health.alert("llm_failing", "AI analysis is failing",
+                         f"The model call failed: {reason}. Incident cards use a template (and say so) until this "
+                         "is fixed. Check the API key, LLM_MODEL and the provider's status.", cooldown_minutes=60)
+        except Exception:  # noqa: BLE001 - an alert problem must not break the investigation
+            pass
+        return {"rca": heuristic_rca(state["signal"], occurrences), "ai_error": reason}
 
 
 def card(state: State) -> State:
@@ -102,12 +122,15 @@ def card(state: State) -> State:
         "severity": signal.get("severity"),
         "error": signal.get("error"),
         "rca": state["rca"],
+        "ai_error": state.get("ai_error") or analysis.get("ai_error"),
         "version": 1,
         **analysis,  # root_cause, remediation, affected_files, ... for coding
     })
     issues.attach_investigation(signal.get("issue_id"), inv_id)
     # Single card with buttons (request_approval notifies); no separate notify.
-    publish_card(inv_id, signal, state["signal_id"], analysis, state["rca"], occurrences, issue)
+    deliveries = publish_card(inv_id, signal, state["signal_id"], analysis, state["rca"], occurrences, issue,
+                              ai_error=state.get("ai_error"))
+    issues.record_delivery(signal.get("issue_id"), deliveries)
     step(logger, "incident.04.card", "investigation filed, approval card sent",
          investigation_id=inv_id, signal_id=state["signal_id"], service=signal.get("service"),
          severity=signal.get("severity"), error=signal.get("error"))
@@ -130,7 +153,8 @@ def build():
     return g.compile()
 
 
-@on_approval(STAGE, extra_actions={"developer": "I'll fix this"})
+@on_approval(STAGE, extra_actions={"developer": "I'll fix this", "ignore": "Ignore",
+                                   "ignore_similar": "Ignore similar"})
 def handle_act(item_id: str, action: str) -> str:
     """Slack gate handler (registered via load_all): approve queues the fix."""
     item = get_item(item_id)
@@ -138,6 +162,27 @@ def handle_act(item_id: str, action: str) -> str:
     bind_trace(signal_id if signal_id != "?" else None)
     sig = get_item(signal_id) if signal_id != "?" else None
     issue_id = (sig["data"] if sig else {}).get("issue_id")
+    if action == "ignore":
+        issues.mark_ignored(issue_id)
+        step(logger, "incident.05.gate", "issue ignored", investigation_id=item_id, signal_id=signal_id,
+             issue_id=issue_id)
+        return (f"ignored (signal {signal_id}): repeats are counted silently; you get a new card if it "
+                f"occurs more than {issues.ignore_threshold()} more times")
+    if action == "ignore_similar":  # a standing rule: matching lines are counted from now on, never posted
+        issue = issues.get_issue(issue_id)
+        data = issue["data"] if issue else {}
+        pattern = ignorelist.pattern_for(data)
+        issues.mark_ignored(issue_id)
+        if not pattern:
+            return ("ignored this issue, but its error name is too generic to ignore similar lines safely: add a "
+                    "pattern to the ignore file by hand")
+        try:
+            ignorelist.add(pattern, service=data.get("service") or "", note=f"from card {item_id}")
+        except ValueError as e:
+            return f"ignored this issue; no standing rule was added ({e})"
+        step(logger, "incident.05.gate", "ignore rule added", investigation_id=item_id, pattern=pattern[:80])
+        return (f"ignored: lines matching `{pattern}` from {data.get('service', 'this service')} are counted but "
+                "never posted from now on (they appear in the digest)")
     if action == "developer":
         issues.mark_developer_fix(issue_id)
         step(logger, "incident.05.gate", "developer will fix it themselves, coding agent not started",
