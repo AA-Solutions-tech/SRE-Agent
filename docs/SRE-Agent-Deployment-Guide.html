@@ -98,7 +98,7 @@
   </nav>
 
   <main>
-    <div class="eyebrow">Deployment guide · v2.2.0</div>
+    <div class="eyebrow">Deployment guide · v1.1.0</div>
     <h1>Deploy SRE Agent on Ubuntu, Debian or RHEL</h1>
     <p class="lead">Install the <code>.deb</code> or <code>.rpm</code> package on one Linux server and run it as a background service with systemd or pm2. This guide covers a <b>new install</b> and an <b>upgrade</b> of an older version.</p>
     <div class="meta"><span><b>~15 min</b> total</span><span><b>2 min</b> install</span><span><b>5 min</b> questions</span><span>rest: checks</span></div>
@@ -143,22 +143,22 @@
 
     <section id="install">
       <h2><span class="n">1</span>Install the package</h2>
-<div class="code"><pre>wget https://github.com/AA-Solutions-tech/SRE-Agent/releases/download/v2.2.0/sre-agent_2.2.0-1_amd64.deb
-wget https://github.com/AA-Solutions-tech/SRE-Agent/releases/download/v2.2.0/SHA256SUMS
-sha256sum -c --ignore-missing SHA256SUMS          <span class="c"># expect: sre-agent_2.2.0-1_amd64.deb: OK</span>
-sudo apt install ./sre-agent_2.2.0-1_amd64.deb</pre></div>
+<div class="code"><pre>wget https://github.com/AA-Solutions-tech/SRE-Agent/releases/download/v1.1.0/sre-agent_1.1.0-1_amd64.deb
+wget https://github.com/AA-Solutions-tech/SRE-Agent/releases/download/v1.1.0/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS          <span class="c"># expect: sre-agent_1.1.0-1_amd64.deb: OK</span>
+sudo apt install ./sre-agent_1.1.0-1_amd64.deb</pre></div>
       <p class="why">What these commands do: the first downloads the package, the second downloads the list of expected checksums, the third checks that your download is not corrupted or tampered with (it must print <code>OK</code>), and the fourth installs it. <code>apt install ./file.deb</code> (with the <code>./</code>) also pulls in the one dependency, <code>git</code>. The package carries its own Python, so nothing else is installed on your system.</p>
       <p>You should see this at the end:</p>
 <div class="code"><pre>sre-agent: created /etc/sre-agent/sre-agent.env
 
-SRE Agent 2.2.0 installed. The service is enabled but NOT started yet.
+SRE Agent 1.1.0 installed. The service is enabled but NOT started yet.
   Configure it:   sudo sre-agent setup</pre></div>
       <p class="why">Everything is installed under <code>/opt/sre-agent</code>. Your settings go to <code>/etc/sre-agent/sre-agent.env</code> and data (database, SSH key, repo clone) to <code>/var/lib/sre-agent</code>, so a later upgrade never touches them.</p>
       <h3>RHEL, Rocky, Alma, Amazon Linux</h3>
-      <p>Use the <code>.rpm</code> instead (install <code>acl</code> with <code>dnf</code> in step 3). On arm64 use <code>sre-agent_2.2.0-1_arm64.deb</code> or <code>sre-agent-2.2.0-1.aarch64.rpm</code>.</p>
-<div class="code"><pre>sudo dnf install https://github.com/AA-Solutions-tech/SRE-Agent/releases/download/v2.2.0/sre-agent-2.2.0-1.x86_64.rpm</pre></div>
+      <p>Use the <code>.rpm</code> instead (install <code>acl</code> with <code>dnf</code> in step 3). On arm64 use <code>sre-agent_1.1.0-1_arm64.deb</code> or <code>sre-agent-1.1.0-1.aarch64.rpm</code>.</p>
+<div class="code"><pre>sudo dnf install https://github.com/AA-Solutions-tech/SRE-Agent/releases/download/v1.1.0/sre-agent-1.1.0-1.x86_64.rpm</pre></div>
       <h3>Verify the install</h3>
-<div class="code"><pre>sre-agent version                     <span class="c"># sre-agent 2.2.0</span>
+<div class="code"><pre>sre-agent version                     <span class="c"># sre-agent 1.1.0</span>
 id sre-agent                          <span class="c"># the service user exists</span>
 sudo ls -l /etc/sre-agent/            <span class="c"># sre-agent.env  -rw-r----- root sre-agent</span></pre></div>
       <p>The install put the program in <code>/opt/sre-agent</code>, created the <code>sre-agent</code> system user, wrote the config file with a <b>unique API key and approval secret for this server</b>, and registered the <code>sre-agent</code> systemd service (enabled, not started).</p>
@@ -372,7 +372,7 @@ sudo sre-agent doctor
 ps -o user=,cmd= -C python3 | grep sre_agent      <span class="c"># sre-agent  ... -m sre_agent serve</span>
 
 <span class="c"># 3. Web API answers</span>
-curl -s localhost:8000/health                      <span class="c"># {"ok":true,"version":"2.2.0",...}</span>
+curl -s localhost:8000/health                      <span class="c"># {"ok":true,"version":"1.1.0",...}</span>
 
 <span class="c"># 4. API is protected</span>
 curl -s -o /dev/null -w "%{http_code}\n" localhost:8000/issues                              <span class="c"># 401</span>
@@ -439,10 +439,10 @@ sudo systemctl is-active sre-agent <span class="c"># active, or use: sudo pm2 li
       <p class="why">Approval links and buttons sent by an older version stop working after the upgrade (links are now tied to one action and expire after 7 days). Approve or reject pending cards before upgrading. If you forget, the issue sends a fresh card the next time the error happens.</p>
 
       <h3>U4 · Download and verify the new package</h3>
-<div class="code"><pre>VERSION=2.2.0
+<div class="code"><pre>VERSION=1.1.0
 wget https://github.com/AA-Solutions-tech/SRE-Agent/releases/download/v$VERSION/sre-agent_$VERSION-1_amd64.deb
 wget https://github.com/AA-Solutions-tech/SRE-Agent/releases/download/v$VERSION/SHA256SUMS
-sha256sum -c --ignore-missing SHA256SUMS          <span class="c"># expect: sre-agent_2.2.0-1_amd64.deb: OK</span></pre></div>
+sha256sum -c --ignore-missing SHA256SUMS          <span class="c"># expect: sre-agent_1.1.0-1_amd64.deb: OK</span></pre></div>
       <p class="why">Use <code>_arm64.deb</code> on an ARM server. Do not install a file whose checksum line does not say <code>OK</code>.</p>
 
       <h3>U5 · Install it</h3>
@@ -456,10 +456,10 @@ sudo dnf upgrade https://github.com/AA-Solutions-tech/SRE-Agent/releases/downloa
 <div class="code"><pre>sudo pm2 restart sre-agent</pre></div>
 
       <h3>U6 · Check the result</h3>
-<div class="code"><pre>sre-agent version                    <span class="c"># sre-agent 2.2.0</span>
+<div class="code"><pre>sre-agent version                    <span class="c"># sre-agent 1.1.0</span>
 sudo sre-agent doctor                <span class="c"># every required line OK; read any WARN</span>
 sudo systemctl status sre-agent      <span class="c"># active (running)</span>
-curl -s localhost:8000/health        <span class="c"># {"ok":true,"version":"2.2.0",...}</span></pre></div>
+curl -s localhost:8000/health        <span class="c"># {"ok":true,"version":"1.1.0",...}</span></pre></div>
       <p class="why"><code>doctor</code> has new checks in 2.2: it makes one tiny live call to your AI model (so a wrong key, model or parameter is reported at once), tests that every watched log can be read, and warns if the approval-link address is <code>localhost</code>. Fix any <code>WARN</code>/<code>FAIL</code> it explains.</p>
 
       <h3>U7 · Prove monitoring still works</h3>
@@ -479,7 +479,7 @@ curl -s localhost:8000/health        <span class="c"># {"ok":true,"version":"2.2
       </table></div>
 
       <h3>Roll back</h3>
-<div class="code"><pre>sudo apt install --allow-downgrades ./sre-agent_2.0.0-1_amd64.deb       <span class="c"># the old package file</span>
+<div class="code"><pre>sudo apt install --allow-downgrades ./sre-agent_<older version>-1_amd64.deb       <span class="c"># the old package file</span>
 sudo systemctl stop sre-agent
 ls /var/lib/sre-agent/backups/                                          <span class="c"># starter.db.&lt;old-version&gt;.&lt;time&gt;</span>
 sudo -u sre-agent cp /var/lib/sre-agent/backups/starter.db.2.0.0.&lt;time&gt; /var/lib/sre-agent/starter.db
