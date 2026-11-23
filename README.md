@@ -18,7 +18,7 @@ The package brings its own Python. The server only needs `git` (installed automa
 ## Install
 
 ```bash
-VERSION=1.1.0
+VERSION=1.2.0
 
 # Ubuntu / Debian
 wget https://github.com/AA-Solutions-tech/SRE-Agent/releases/download/v$VERSION/sre-agent_$VERSION-1_amd64.deb
@@ -42,17 +42,19 @@ The setup asks a few questions, one section at a time, and writes `/etc/sre-agen
 |---|---|---|
 | AI provider | Claude / OpenAI / Groq / xAI / OpenAI-compatible, and its API key | yes |
 | Alerts | Slack and/or Google Chat webhook, or email (SMTP) | at least one |
+| Approvers | Slack member ids and names of the people who may press Approve | optional |
 | Logs | a log file on this server, or on another server over SSH (it can create the SSH key and trust the server for you) | yes |
 | Web access | public URL for the Approve/Reject links, listen address, port | defaults offered |
 | Code fixes | repo path, branch, test command, GitHub token | optional |
 | Automation | auto mode, code fixes, pushing, shipping mode | optional (all off at first) |
+| Advanced | Slack channel id, time zone, Jira details, report repos, log read interval, SSH host key check | optional |
 
 Press **Enter** to keep the value shown in brackets or skip an optional question, type **-** to clear a value,
 **Ctrl+C** to quit without saving. Secrets are typed hidden and shown masked. At the end it shows a summary,
 saves (keeping a `.bak` copy), runs `sre-agent doctor` and offers to start the service.
 
 Change one part later with e.g. `sudo sre-agent setup --only notifications`
-(sections: `llm`, `notifications`, `logs`, `web`, `code`, `automation`).
+(sections: `llm`, `notifications`, `approvers`, `logs`, `web`, `tickets`, `code`, `automation`, `advanced`).
 
 Prefer editing by hand? `sudo nano /etc/sre-agent/sre-agent.env`, then `sudo sre-agent doctor` and
 `sudo systemctl restart sre-agent`.
